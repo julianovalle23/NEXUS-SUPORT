@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Dashboard analítico</h1>
+      <p class="sub">Indicadores calculados con consultas SQL sobre los incidentes almacenados.</p>
+    </div>
+  </div>
+
+  <form class="filters card" id="filtros">
+    <div class="field"><label for="f-desde">Desde</label><input type="date" id="f-desde" name="desde"></div>
+    <div class="field"><label for="f-hasta">Hasta</label><input type="date" id="f-hasta" name="hasta"></div>
+    <div class="field"><label for="f-categoria">Categoría</label><select id="f-categoria" name="categoriaId"></select></div>
+    <div class="field"><label for="f-prioridad">Prioridad</label><select id="f-prioridad" name="prioridadId"></select></div>
+    <div class="field"><label for="f-gran">Tendencia</label>
+      <select id="f-gran" name="granularidad"><option value="semana">Semanal</option><option value="dia">Diaria</option></select></div>
+    <button class="btn primary" type="submit">Aplicar</button>
+    <button class="btn" type="reset">Limpiar</button>
+  </form>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid grid-2">
+    <section class="card span-2">
+      <div class="chart-head"><h2>SLA operativo (incidentes no finalizados)</h2><span class="muted" id="sla-nota"></span></div>
+      <div id="sla"></div>
+    </section>
+
+    <section class="card span-2">
+      <div class="chart-head"><h2>Evolución de incidentes</h2><button class="link-btn" data-tabla="tendencia" type="button">Ver datos</button></div>
+      <div class="legend"><span><i style="background:var(--series-1)"></i>Registrados</span><span><i style="background:var(--series-2)"></i>Resueltos (del periodo)</span></div>
+      <div class="chart-box tall"><canvas id="c-tendencia" aria-label="Evolución de incidentes registrados y resueltos" role="img"></canvas></div>
+      <div class="data-table" id="t-tendencia" hidden></div>
+    </section>
+
+    <section class="card">
+      <div class="chart-head"><h2>Incidentes por categoría</h2><button class="link-btn" data-tabla="categoria" type="button">Ver datos</button></div>
+      <div class="chart-box"><canvas id="c-categoria" aria-label="Incidentes por categoría" role="img"></canvas></div>
+      <div class="data-table" id="t-categoria" hidden></div>
+    </section>
+
+    <section class="card">
+      <div class="chart-head"><h2>Tiempo promedio de resolución por categoría (h)</h2><button class="link-btn" data-tabla="tiempo" type="button">Ver datos</button></div>
+      <div class="chart-box"><canvas id="c-tiempo" aria-label="Tiempo promedio de resolución por categoría" role="img"></canvas></div>
+      <div class="data-table" id="t-tiempo" hidden></div>
+    </section>
+
+    <section class="card">
+      <div class="chart-head"><h2>Incidentes por prioridad</h2><button class="link-btn" data-tabla="prioridad" type="button">Ver datos</button></div>
+      <div class="chart-box"><canvas id="c-prioridad" aria-label="Incidentes por prioridad" role="img"></canvas></div>
+      <div class="data-table" id="t-prioridad" hidden></div>
+    </section>
+
+    <section class="card">
+      <div class="chart-head"><h2>Incidentes por estado</h2><button class="link-btn" data-tabla="estado" type="button">Ver datos</button></div>
+      <div class="chart-box"><canvas id="c-estado" aria-label="Incidentes por estado" role="img"></canvas></div>
+      <div class="data-table" id="t-estado" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>Problemas más recurrentes</h2>
+      <div class="table-wrap" id="recurrentes"></div>
+    </section>
+
+    <section class="card">
+      <h2>Uso del asistente inteligente</h2>
+      <div id="asistencia"></div>
+    </section>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script src="js/dashboard.js"></script>
+</body>
+</html>

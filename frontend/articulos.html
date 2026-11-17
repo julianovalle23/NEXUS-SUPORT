@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Base de conocimiento · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Base de conocimiento</h1>
+      <p class="sub">Solo los artículos <strong>activos y verificados</strong> se usan como fuentes del asistente.</p>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap" data-roles="ADMIN">
+      <button class="btn" id="btn-reindexar" type="button" title="Ejecuta la indexación del workflow nexus-support de n8n">Sincronizar embeddings</button>
+      <button class="btn primary" id="btn-nuevo" type="button">+ Nuevo artículo</button>
+    </div>
+  </div>
+
+  <form class="filters card" id="filtros">
+    <div class="field"><label for="f-activo">Estado</label>
+      <select id="f-activo" name="activo">
+        <option value="">Todos</option><option value="true">Activos</option><option value="false">Inactivos</option>
+      </select></div>
+    <div class="field"><label for="f-categoria">Categoría</label><select id="f-categoria" name="categoriaId"></select></div>
+    <button class="btn" type="submit">Filtrar</button>
+    <span class="muted" id="resumen"></span>
+  </form>
+
+  <section class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Título</th><th>Categoría</th><th>Activo</th><th>Verificado</th><th>Fuente RAG</th><th>Actualizado</th><th></th></tr></thead>
+        <tbody id="tabla"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:16px">
+    <div class="chart-head"><h2>Calidad de la base de conocimiento</h2>
+      <span class="muted">Según el historial del asistente y las calificaciones (todas las fechas)</span></div>
+
+    <h3>Datos observados</h3>
+    <h4>Artículos más útiles</h4>
+    <p class="muted">Artículos citados como fuente en respuestas, ordenados por calificación promedio y número de usos.</p>
+    <div id="k-uso"></div>
+    <h4>Consultas sin fuentes</h4>
+    <div id="k-sin-fuentes"></div>
+    <h4>Cobertura por categoría</h4>
+    <div id="k-cobertura"></div>
+
+    <h3>Recomendaciones <span class="muted">(reglas automáticas sobre los datos anteriores, no verificadas por una persona)</span></h3>
+    <div id="k-recomendaciones"></div>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <form id="form" method="dialog">
+    <h2 id="dlg-titulo">Nuevo artículo</h2>
+    <input type="hidden" name="id">
+    <div class="field"><label for="a-titulo">Título *</label><input id="a-titulo" name="titulo" maxlength="200" required></div>
+    <div class="field"><label for="a-problema">Descripción del problema *</label><textarea id="a-problema" name="problema" required></textarea></div>
+    <div class="field"><label for="a-sintomas">Síntomas *</label><textarea id="a-sintomas" name="sintomas" required></textarea></div>
+    <div class="field"><label for="a-causa">Causa *</label><textarea id="a-causa" name="causa" required></textarea></div>
+    <div class="field"><label for="a-solucion">Procedimiento de solución *</label><textarea id="a-solucion" name="solucion" required></textarea></div>
+    <div class="row">
+      <div class="field"><label for="a-categoria">Categoría</label><select id="a-categoria" name="categoriaId"></select></div>
+      <div class="field"><label for="a-verificado">Verificado</label>
+        <select id="a-verificado" name="verificado"><option value="false">No</option><option value="true">Sí</option></select></div>
+    </div>
+    <div class="errors" id="errores"></div>
+    <div class="actions">
+      <button class="btn" type="button" id="cancelar">Cancelar</button>
+      <button class="btn primary" type="submit">Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let articulos = [];
+
+async function iniciar() {
+  try {
+    const c = await api.catalogos();
+    llenarSelect($('#f-categoria'), c.categorias, { vacio: 'Todas' });
+    llenarSelect($('#a-categoria'), c.categorias, { vacio: 'General' });
+  } catch (e) { mostrarError(e); }
+  cargar();
+  calidad();
+}
+
+function tablaSimple(columnas, filas, vacio) {
+  if (!filas.length) return `<p class="muted">${vacio}</p>`;
+  return `<div class="table-wrap"><table><thead><tr>${columnas.map(([t, , n]) =>
+    `<th class="${n ? 'num' : ''}">${t}</th>`).join('')}</tr></thead><tbody>${filas.map((f) =>
+    `<tr>${columnas.map(([, fn, n]) => `<td class="${n ? 'num' : ''}">${fn(f)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+async function calidad() {
+  let k;
+  try { k = await api.conocimiento(); } catch (e) { mostrarError(e); return; }
+  $('#k-uso').innerHTML = tablaSimple([
+    ['#', (a) => a.id, 1], ['Artículo', (a) => esc(a.titulo)], ['Categoría', (a) => esc(a.categoria ?? 'General')],
+    ['Fuente válida hoy', (a) => a.fuenteValida ? '<span class="badge ok">Sí</span>' : '<span class="badge err">No (inactivo o sin verificar)</span>'],
+    ['Usos', (a) => num(a.usos), 1], ['Similitud media', (a) => num(a.similitudPromedio, 2), 1],
+    ['Calificación', (a) => a.calificacionPromedio != null ? `${num(a.calificacionPromedio, 2)} / 5` : '—', 1],
+    ['Calificaciones', (a) => num(a.calificaciones), 1],
+  ], k.articulosUtiles, 'Ningún artículo ha sido usado todavía como fuente.');
+  $('#k-sin-fuentes').innerHTML = `<p><strong>${num(k.consultasSinFuentes)}</strong> consulta(s) terminaron sin fuentes suficientes. Últimas:</p>` +
+    tablaSimple([
+      ['Fecha', (c) => fecha(c.fecha)],
+      ['Incidente', (c) => `<a href="incidentes.html?id=${c.incidenteId}">#${c.incidenteId}</a> ${esc(c.incidente)}`],
+      ['Categoría', (c) => esc(c.categoria)], ['Consulta', (c) => esc(c.pregunta)],
+    ], k.ultimasSinFuentes, 'No hay consultas sin fuentes.');
+  $('#k-cobertura').innerHTML = tablaSimple([
+    ['Categoría', (c) => esc(c.categoria)], ['Artículos válidos', (c) => num(c.articulosValidos), 1],
+    ['Consultas', (c) => num(c.consultas), 1], ['Respondidas', (c) => num(c.respondidas), 1],
+    ['Sin fuentes', (c) => num(c.sinResultados), 1], ['Mal calificadas (≤ 2)', (c) => num(c.malCalificadas), 1],
+    ['Calificación', (c) => c.calificacionPromedio != null ? num(c.calificacionPromedio, 2) : '—', 1],
+  ], k.cobertura, 'Sin categorías.');
+  $('#k-recomendaciones').innerHTML = k.recomendaciones.length
+    ? `<ul>${k.recomendaciones.map((r) => `<li><strong>${esc(r.mensaje)}</strong> <span class="muted">— ${esc(r.evidencia)} · regla ${esc(r.regla)}</span></li>`).join('')}</ul>`
+    : '<p class="muted">Ninguna regla detectó vacíos de conocimiento.</p>';
+}
+
+async function cargar() {
+  const tbody = $('#tabla');
+  try {
+    articulos = await api.articulos(Object.fromEntries(new FormData($('#filtros'))));
+    const admin = tieneRol('ADMIN');
+    const fuentes = articulos.filter((a) => a.fuenteValida).length;
+    $('#resumen').textContent = `${articulos.length} artículos · ${fuentes} utilizables como fuente`;
+    tbody.innerHTML = articulos.length ? articulos.map((a) => `
+      <tr id="art-${a.id}">
+        <td class="num">${a.id}</td>
+        <td><strong>${esc(a.titulo)}</strong><div class="muted clip">${esc(a.problema)}</div></td>
+        <td>${esc(a.categoria?.nombre ?? 'General')}</td>
+        <td><label><input type="checkbox" data-accion="activo" data-id="${a.id}" ${a.activo ? 'checked' : ''} ${admin ? '' : 'disabled'} style="width:auto"> ${a.activo ? 'Sí' : 'No'}</label></td>
+        <td><label><input type="checkbox" data-accion="verificado" data-id="${a.id}" ${a.verificado ? 'checked' : ''} ${admin ? '' : 'disabled'} style="width:auto"> ${a.verificado ? 'Sí' : 'No'}</label></td>
+        <td>${a.fuenteValida ? '<span class="badge ok">Sí</span>' : '<span class="badge">No</span>'}</td>
+        <td class="muted">${fecha(a.fechaActualizacion)}</td>
+        <td>${admin ? `<button class="btn small" data-editar="${a.id}" type="button">Editar</button>` : ''}</td>
+      </tr>`).join('') : `<tr><td colspan="8" class="empty">Sin artículos.</td></tr>`;
+    if (location.hash) document.querySelector(location.hash)?.scrollIntoView({ block: 'center' });
+  } catch (e) { mostrarError(e); }
+}
+
+$('#tabla').addEventListener('change', async (e) => {
+  const cb = e.target.closest('input[data-accion]');
+  if (!cb) return;
+  const a = articulos.find((x) => x.id === Number(cb.dataset.id));
+  const activo = cb.dataset.accion === 'activo' ? cb.checked : a.activo;
+  const verificado = cb.dataset.accion === 'verificado' ? cb.checked : a.verificado;
+  try {
+    await api.estadoArticulo(a.id, activo, verificado);
+    toast(activo && verificado ? 'Artículo habilitado como fuente; se reindexará en Qdrant'
+                               : 'El artículo ya no se usará como fuente');
+    cargar();
+  } catch (err) { mostrarError(err); cb.checked = !cb.checked; }
+});
+
+const dlg = $('#dlg');
+function abrir(a) {
+  const f = $('#form');
+  f.reset();
+  $('#errores').textContent = '';
+  $('#dlg-titulo').textContent = a ? `Editar artículo #${a.id}` : 'Nuevo artículo';
+  if (a) {
+    ['id', 'titulo', 'problema', 'sintomas', 'causa', 'solucion'].forEach((k) => f.elements[k].value = a[k]);
+    f.elements.categoriaId.value = a.categoria?.id ?? '';
+    f.elements.verificado.value = String(a.verificado);
+  } else {
+    f.elements.id.value = '';
+  }
+  dlg.showModal();
+}
+$('#btn-nuevo').addEventListener('click', () => abrir(null));
+$('#cancelar').addEventListener('click', () => dlg.close());
+$('#tabla').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-editar]');
+  if (b) abrir(articulos.find((a) => a.id === Number(b.dataset.editar)));
+});
+$('#form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const d = Object.fromEntries(new FormData(e.target));
+  const id = d.id;
+  delete d.id;
+  d.categoriaId = d.categoriaId ? Number(d.categoriaId) : null;
+  d.verificado = d.verificado === 'true';
+  try {
+    if (id) await api.actualizarArticulo(id, d); else await api.crearArticulo(d);
+    dlg.close();
+    toast('Artículo guardado; los embeddings se actualizarán automáticamente');
+    cargar();
+  } catch (err) {
+    $('#errores').textContent = err.campos ? Object.values(err.campos).join(' · ') : err.message;
+  }
+});
+$('#filtros').addEventListener('submit', (e) => { e.preventDefault(); cargar(); });
+
+$('#btn-reindexar').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Sincronizando…';
+  try {
+    const r = await api.reindexar(false);
+    toast(`Vectorizados: ${r.vectorizados?.length ?? 0} · eliminados: ${r.eliminados?.length ?? 0} · sin cambios: ${r.sinCambios ?? 0}`);
+  } catch (err) { mostrarError(err); }
+  btn.disabled = false;
+  btn.textContent = 'Sincronizar embeddings';
+});
+
+iniciarLayout('articulos.html').then(iniciar);
+</script>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usuarios · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Usuarios y perfiles</h1>
+      <p class="sub"><strong>Solicitante:</strong> registra incidentes y ve los suyos ·
+        <strong>Técnico:</strong> gestiona incidentes, asistencia e indicadores ·
+        <strong>Administrador:</strong> además, base de conocimiento y cuentas.</p>
+    </div>
+    <button class="btn primary" id="btn-nuevo" type="button">+ Nueva cuenta</button>
+  </div>
+
+  <section class="card">
+    <div class="chart-head"><h2>Cuentas</h2><span class="muted" id="resumen"></span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Nombre</th><th>Correo</th><th>Área</th><th>Perfil</th><th>Estado</th><th>Contraseña</th><th></th></tr></thead>
+        <tbody id="tabla"></tbody>
+      </table>
+    </div>
+    <p class="muted">Una cuenta sin contraseña no puede iniciar sesión. Solo las cuentas con perfil Técnico reciben incidentes.
+      Cambiar el perfil, el correo, el estado o la contraseña de una cuenta cierra sus sesiones abiertas.</p>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <form id="form" method="dialog">
+    <h2 id="dlg-titulo">Nueva cuenta</h2>
+    <div class="field"><label for="u-nombre">Nombre *</label><input id="u-nombre" name="nombre" maxlength="120" required></div>
+    <div class="row">
+      <div class="field"><label for="u-correo">Correo *</label><input id="u-correo" name="correo" type="email" maxlength="160" required></div>
+      <div class="field"><label for="u-area">Área *</label><input id="u-area" name="area" maxlength="80" required></div>
+      <div class="field"><label for="u-rol">Perfil *</label>
+        <select id="u-rol" name="rol" required>
+          <option value="SOLICITANTE">Solicitante</option><option value="TECNICO">Técnico</option><option value="ADMIN">Administrador</option>
+        </select></div>
+    </div>
+    <div class="field" id="campo-activo"><label for="u-activo">Estado</label>
+      <select id="u-activo" name="activo"><option value="true">Activa</option><option value="false">Inactiva</option></select></div>
+    <div class="field" id="campo-clave"><label for="u-clave">Contraseña inicial (opcional, 8 a 72 caracteres)</label>
+      <input id="u-clave" name="clave" type="password" autocomplete="new-password" minlength="8" maxlength="72"></div>
+    <div class="errors" id="errores"></div>
+    <div class="actions">
+      <button class="btn" type="button" id="cancelar">Cancelar</button>
+      <button class="btn primary" type="submit">Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-clave">
+  <form id="form-clave" method="dialog">
+    <h2>Asignar contraseña a <span id="c-nombre"></span></h2>
+    <div class="field"><label for="c-clave">Nueva contraseña (8 a 72 caracteres)</label>
+      <input id="c-clave" name="clave" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></div>
+    <p class="muted">Comuníquela a la persona por un canal seguro y pídale que la cambie con el botón «Contraseña».</p>
+    <div class="errors" id="c-errores"></div>
+    <div class="actions">
+      <button class="btn" type="button" id="c-cancelar">Cancelar</button>
+      <button class="btn primary" type="submit">Asignar</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let cuentas = [];
+let editando = null;
+
+async function cargar() {
+  const tbody = $('#tabla');
+  try {
+    cuentas = await api.usuarios();
+    const activos = cuentas.filter((u) => u.activo).length;
+    $('#resumen').textContent = `${cuentas.length} cuentas · ${activos} activas`;
+    tbody.innerHTML = cuentas.map((u) => `
+      <tr>
+        <td>${esc(u.nombre)}${u.id === SESION.id ? ' <span class="muted">(usted)</span>' : ''}</td>
+        <td>${esc(u.correo)}</td>
+        <td>${esc(u.area)}</td>
+        <td><span class="badge info">${esc(NOMBRE_ROL[u.rol])}</span></td>
+        <td>${u.activo ? '<span class="badge ok">Activa</span>' : '<span class="badge">Inactiva</span>'}</td>
+        <td>${u.tieneClave ? 'Asignada' : '<span class="badge warn">Sin contraseña</span>'}</td>
+        <td style="white-space:nowrap">
+          <button class="btn small" data-editar="${u.id}" type="button">Editar</button>
+          <button class="btn small" data-clave="${u.id}" type="button">Contraseña</button>
+        </td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No se pudieron cargar las cuentas.</td></tr>';
+    mostrarError(e);
+  }
+}
+
+function abrir(u) {
+  editando = u;
+  const f = $('#form');
+  f.reset();
+  $('#dlg-titulo').textContent = u ? `Editar cuenta de ${u.nombre}` : 'Nueva cuenta';
+  $('#campo-clave').hidden = !!u;
+  $('#campo-activo').hidden = !u;
+  if (u) {
+    f.nombre.value = u.nombre;
+    f.correo.value = u.correo;
+    f.area.value = u.area;
+    f.rol.value = u.rol;
+    f.activo.value = String(u.activo);
+  }
+  $('#errores').textContent = '';
+  $('#dlg').showModal();
+}
+
+$('#form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const d = Object.fromEntries(new FormData(e.target));
+  d.activo = editando ? d.activo === 'true' : true;
+  if (editando || !d.clave) delete d.clave;
+  try {
+    if (editando) await api.actualizarUsuario(editando.id, d); else await api.crearUsuario(d);
+    $('#dlg').close();
+    toast(editando ? 'Cuenta actualizada' : 'Cuenta creada');
+    cargar();
+  } catch (err) {
+    $('#errores').textContent = err.campos ? Object.values(err.campos).join(' · ') : err.message;
+  }
+});
+
+$('#form-clave').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api.asignarClave(editando.id, $('#c-clave').value);
+    $('#dlg-clave').close();
+    toast(`Contraseña asignada a ${editando.nombre}`);
+    cargar();
+  } catch (err) {
+    $('#c-errores').textContent = err.campos ? Object.values(err.campos).join(' · ') : err.message;
+  }
+});
+
+$('#btn-nuevo').addEventListener('click', () => abrir(null));
+$('#cancelar').addEventListener('click', () => $('#dlg').close());
+$('#c-cancelar').addEventListener('click', () => $('#dlg-clave').close());
+$('#tabla').addEventListener('click', (e) => {
+  const ed = e.target.closest('[data-editar]');
+  if (ed) abrir(cuentas.find((u) => u.id === Number(ed.dataset.editar)));
+  const cl = e.target.closest('[data-clave]');
+  if (cl) {
+    editando = cuentas.find((u) => u.id === Number(cl.dataset.clave));
+    $('#form-clave').reset();
+    $('#c-nombre').textContent = editando.nombre;
+    $('#c-errores').textContent = '';
+    $('#dlg-clave').showModal();
+  }
+});
+
+iniciarLayout('usuarios.html').then(cargar);
+</script>
+</body>
+</html>

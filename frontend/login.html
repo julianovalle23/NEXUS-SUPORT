@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Iniciar sesión · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="login-wrap">
+  <form class="card login-card" id="form-login">
+    <div class="brand">NEXUS <span>Support</span></div>
+    <p class="sub">Inicie sesión con su correo y contraseña.</p>
+    <div class="field"><label for="correo">Correo</label>
+      <input id="correo" name="correo" type="email" autocomplete="username" required autofocus></div>
+    <div class="field"><label for="clave">Contraseña</label>
+      <input id="clave" name="clave" type="password" autocomplete="current-password" required></div>
+    <div class="errors" id="errores" role="alert"></div>
+    <button class="btn primary" type="submit" id="entrar">Entrar</button>
+    <p class="muted">¿No tiene cuenta o olvidó la contraseña? Solicítela a un administrador de la mesa de servicio.</p>
+  </form>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+aplicarTema();
+const $ = (s) => document.querySelector(s);
+
+/** Solo se acepta volver a una página propia (evita redirecciones a otros sitios). */
+function destino(rol) {
+  const volver = new URLSearchParams(location.search).get('volver') || '';
+  const pagina = volver.split('?')[0];
+  const permitida = PAGINAS.find(([href, , roles]) => href === pagina && roles.includes(rol));
+  return permitida && /^[a-z]+\.html(\?[\w=&%.-]*)?$/.test(volver) ? volver : paginaInicial(rol);
+}
+
+// Si ya hay sesión, ir directo a la aplicación; además obtiene la cookie CSRF.
+api.sesion().then((s) => { if (s.autenticado) location.replace(destino(s.usuario.rol)); })
+  .catch((e) => { $('#errores').textContent = e.message; });
+
+$('#form-login').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#entrar');
+  btn.disabled = true;
+  $('#errores').textContent = '';
+  try {
+    const s = await api.login($('#correo').value, $('#clave').value);
+    location.replace(destino(s.usuario.rol));
+  } catch (err) {
+    $('#errores').textContent = err.message;
+    $('#clave').value = '';
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

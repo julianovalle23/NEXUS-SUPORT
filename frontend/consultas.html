@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Historial IA · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Historial de asistencias</h1>
+      <p class="sub">Cada consulta inteligente con su respuesta, fuentes, similitudes, estado y calificación.</p>
+    </div>
+  </div>
+
+  <form class="filters card" id="filtros">
+    <div class="field"><label for="f-estado">Estado</label>
+      <select id="f-estado" name="estado">
+        <option value="">Todos</option>
+        <option value="RESPONDIDA">Respondida</option>
+        <option value="SIN_RESULTADOS">Sin resultados</option>
+        <option value="ERROR">Error</option>
+        <option value="PENDIENTE">Pendiente</option>
+      </select></div>
+    <button class="btn" type="submit">Filtrar</button>
+    <span class="muted" id="total"></span>
+  </form>
+
+  <section class="card" id="lista"></section>
+  <div class="pager">
+    <button class="btn small" id="prev" type="button">‹ Anterior</button>
+    <span id="pagina"></span>
+    <button class="btn small" id="next" type="button">Siguiente ›</button>
+  </div>
+</main>
+
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script src="js/asistencia.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let pagina = 0;
+
+async function cargar() {
+  const lista = $('#lista');
+  lista.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  try {
+    const r = await api.consultas({ estado: $('#f-estado').value, pagina, tamano: 10 });
+    $('#total').textContent = `${num(r.totalElementos)} consultas`;
+    $('#pagina').textContent = r.totalPaginas ? `Página ${r.pagina + 1} de ${r.totalPaginas}` : '';
+    $('#prev').disabled = r.pagina === 0;
+    $('#next').disabled = r.pagina + 1 >= r.totalPaginas;
+    lista.innerHTML = r.contenido.length
+      ? r.contenido.map((c) => renderConsulta(c, { conIncidente: true })).join('')
+      : '<div class="empty">Aún no hay consultas registradas.</div>';
+    activarCalificaciones(lista, cargar);
+  } catch (e) {
+    lista.innerHTML = '<div class="empty">No se pudo cargar el historial.</div>';
+    mostrarError(e);
+  }
+}
+
+$('#filtros').addEventListener('submit', (e) => { e.preventDefault(); pagina = 0; cargar(); });
+$('#prev').addEventListener('click', () => { pagina--; cargar(); });
+$('#next').addEventListener('click', () => { pagina++; cargar(); });
+iniciarLayout('consultas.html').then(cargar);
+</script>
+</body>
+</html>

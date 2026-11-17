@@ -1,0 +1,63 @@
+server:
+  port: 8080
+
+spring:
+  # Lee el .env de la raíz del repositorio (mvn spring-boot:run se ejecuta desde ./backend)
+  config:
+    import: optional:file:../.env[.properties]
+  # Sirve el frontend (HTML, CSS y JS) directamente desde ../frontend
+  web:
+    resources:
+      static-locations: file:../frontend/,classpath:/static/
+  application:
+    name: nexus-support
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/nexus_support}
+    username: ${DB_USER:nexus}
+    password: ${DB_PASSWORD:}
+  jpa:
+    # El esquema lo crea database/init/01-schema.sql; Hibernate solo lo valida.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: America/Bogota
+  jackson:
+    time-zone: America/Bogota
+    serialization:
+      write-dates-as-timestamps: false
+
+nexus:
+  n8n:
+    webhook-base-url: ${N8N_WEBHOOK_BASE_URL:http://localhost:5678/webhook}
+    rag-path: /nexus/rag
+    indexacion-path: /nexus/indexar
+  internal-token: ${INTERNAL_API_TOKEN:}
+  # Primera cuenta de administración: se crea solo si no hay ningún administrador con contraseña
+  admin-inicial:
+    correo: ${NEXUS_ADMIN_CORREO:}
+    clave: ${NEXUS_ADMIN_CLAVE:}
+  rag:
+    # Similitud coseno mínima (0-1) para aceptar un artículo como fuente
+    umbral-similitud: ${RAG_UMBRAL_SIMILITUD:0.45}
+    top-k: ${RAG_TOP_K:5}
+    min-resultados: ${RAG_MIN_RESULTADOS:1}
+    timeout-segundos: ${RAG_TIMEOUT_SEGUNDOS:60}
+    permitir-simulacion-fallos: ${RAG_PERMITIR_SIMULACION_FALLOS:false}
+  cors:
+    origenes: ${CORS_ORIGENES:http://localhost:3000,http://127.0.0.1:3000}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+  api-docs:
+    path: /v3/api-docs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Incidentes · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Incidentes</h1>
+      <p class="sub">Registro, consulta y asistencia inteligente.</p>
+    </div>
+    <button class="btn primary" id="btn-nuevo" type="button">+ Nuevo incidente</button>
+  </div>
+
+  <form class="filters card" id="filtros">
+    <div class="field grow"><label for="f-texto">Buscar</label><input id="f-texto" name="texto" placeholder="Título o descripción"></div>
+    <div class="field"><label for="f-categoria">Categoría</label><select id="f-categoria" name="categoriaId"></select></div>
+    <div class="field"><label for="f-prioridad">Prioridad</label><select id="f-prioridad" name="prioridadId"></select></div>
+    <div class="field"><label for="f-estado">Estado</label><select id="f-estado" name="estadoId"></select></div>
+    <div class="field"><label for="f-desde">Desde</label><input type="date" id="f-desde" name="desde"></div>
+    <div class="field"><label for="f-hasta">Hasta</label><input type="date" id="f-hasta" name="hasta"></div>
+    <button class="btn" type="submit">Filtrar</button>
+    <button class="btn" type="reset">Limpiar</button>
+  </form>
+
+  <div class="layout-split">
+    <section class="card">
+      <div class="chart-head"><h2>Listado</h2><span class="muted" id="total"></span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Título</th><th>Categoría</th><th>Prioridad</th><th>Estado</th><th>SLA</th><th>Creado</th></tr></thead>
+          <tbody id="tabla"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button class="btn small" id="prev" type="button">‹ Anterior</button>
+        <span id="pagina"></span>
+        <button class="btn small" id="next" type="button">Siguiente ›</button>
+      </div>
+    </section>
+
+    <section class="card detail" id="detalle">
+      <div class="empty">Seleccione un incidente para ver su detalle y solicitar asistencia.</div>
+    </section>
+  </div>
+</main>
+
+<dialog id="dlg-nuevo">
+  <form id="form-nuevo" method="dialog">
+    <h2>Nuevo incidente</h2>
+    <div class="field"><label for="n-titulo">Título *</label><input id="n-titulo" name="titulo" maxlength="200" required></div>
+    <div class="field"><label for="n-descripcion">Descripción *</label><textarea id="n-descripcion" name="descripcion" required></textarea></div>
+    <div class="row">
+      <div class="field"><label for="n-categoria">Categoría *</label><select id="n-categoria" name="categoriaId" required></select></div>
+      <div class="field"><label for="n-prioridad">Prioridad *</label><select id="n-prioridad" name="prioridadId" required></select></div>
+      <div class="field" data-roles="TECNICO ADMIN"><label for="n-usuario">Técnico responsable *</label><select id="n-usuario" name="usuarioId" required></select></div>
+    </div>
+    <p class="muted" data-roles="SOLICITANTE">El incidente se asigna automáticamente al técnico con menos incidentes abiertos.</p>
+    <div class="field" data-roles="TECNICO ADMIN"><label for="n-solicitante">Solicitante (quien reporta)</label><input id="n-solicitante" name="solicitante" maxlength="120" placeholder="Opcional: nombre o área de quien reporta"></div>
+    <div class="errors" id="n-errores"></div>
+    <div class="actions">
+      <button class="btn" type="button" id="n-cancelar">Cancelar</button>
+      <button class="btn primary" type="submit" id="n-guardar">Registrar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-editar">
+  <form id="form-editar" method="dialog">
+    <h2>Editar incidente <span id="e-id"></span></h2>
+    <div class="field"><label for="e-titulo">Título *</label><input id="e-titulo" name="titulo" maxlength="200" required></div>
+    <div class="field"><label for="e-descripcion">Descripción *</label><textarea id="e-descripcion" name="descripcion" required></textarea></div>
+    <div class="row">
+      <div class="field"><label for="e-categoria">Categoría *</label><select id="e-categoria" name="categoriaId" required></select></div>
+      <div class="field"><label for="e-prioridad">Prioridad *</label><select id="e-prioridad" name="prioridadId" required></select></div>
+      <div class="field"><label for="e-usuario">Técnico responsable *</label><select id="e-usuario" name="usuarioId" required></select></div>
+    </div>
+    <div class="field"><label for="e-solicitante">Solicitante (quien reporta)</label><input id="e-solicitante" name="solicitante" maxlength="120"></div>
+    <p class="muted">Cambiar la prioridad recalcula el SLA desde la fecha de creación. El estado se cambia desde el detalle.</p>
+    <div class="errors" id="e-errores"></div>
+    <div class="actions">
+      <button class="btn" type="button" id="e-cancelar">Cancelar</button>
+      <button class="btn primary" type="submit">Guardar cambios</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script src="js/asistencia.js"></script>
+<script>
+const estado = { pagina: 0, tamano: 15, catalogos: null, seleccionado: null };
+const $ = (s) => document.querySelector(s);
+
+async function iniciar() {
+  try {
+    estado.catalogos = await api.catalogos();
+  } catch (e) { mostrarError(e); return; }
+  if (tieneRol('SOLICITANTE')) {
+    // El solicitante no elige técnico: el servidor lo asigna
+    $('#n-usuario').required = false;
+    document.querySelector('.page-head h1').textContent = 'Mis incidentes';
+    document.querySelector('.page-head .sub').textContent = 'Registre sus incidentes y consulte su estado.';
+  }
+  const c = estado.catalogos;
+  llenarSelect($('#f-categoria'), c.categorias, { vacio: 'Todas' });
+  llenarSelect($('#f-prioridad'), c.prioridades, { vacio: 'Todas' });
+  llenarSelect($('#f-estado'), c.estados, { vacio: 'Todos' });
+  llenarSelect($('#n-categoria'), c.categorias);
+  llenarSelect($('#n-prioridad'), c.prioridades);
+  llenarSelect($('#n-usuario'), c.usuarios);
+  llenarSelect($('#e-categoria'), c.categorias);
+  llenarSelect($('#e-prioridad'), c.prioridades);
+  $('#n-prioridad').value = c.prioridades.find((p) => p.nivel === 2)?.id ?? '';
+
+  // Permite abrir un incidente directamente: incidentes.html?id=12
+  const id = new URLSearchParams(location.search).get('id');
+  await cargar();
+  if (id) seleccionar(Number(id));
+}
+
+function filtros() {
+  const f = Object.fromEntries(new FormData($('#filtros')));
+  return { ...f, pagina: estado.pagina, tamano: estado.tamano };
+}
+
+async function cargar() {
+  const tbody = $('#tabla');
+  tbody.innerHTML = `<tr><td colspan="7" class="empty"><span class="spinner"></span></td></tr>`;
+  try {
+    const r = await api.incidentes(filtros());
+    $('#total').textContent = `${num(r.totalElementos)} incidentes`;
+    $('#pagina').textContent = r.totalPaginas ? `Página ${r.pagina + 1} de ${r.totalPaginas}` : '';
+    $('#prev').disabled = r.pagina === 0;
+    $('#next').disabled = r.pagina + 1 >= r.totalPaginas;
+    tbody.innerHTML = r.contenido.length ? r.contenido.map((i) => `
+      <tr class="clickable ${i.id === estado.seleccionado ? 'selected' : ''}" data-id="${i.id}">
+        <td class="num">${i.id}</td>
+        <td>${esc(i.titulo)}</td>
+        <td>${esc(i.categoria.nombre)}</td>
+        <td>${esc(i.prioridad.nombre)}</td>
+        <td>${badgeEstadoIncidente(i.estado.nombre)}</td>
+        <td>${badgeSla(i.sla?.estado)}</td>
+        <td class="muted">${fecha(i.fechaCreacion)}</td>
+      </tr>`).join('') : `<tr><td colspan="7" class="empty">No hay incidentes con estos filtros.</td></tr>`;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">No se pudieron cargar los incidentes.</td></tr>`;
+    mostrarError(e);
+  }
+}
+
+async function seleccionar(id) {
+  estado.seleccionado = id;
+  document.querySelectorAll('#tabla tr').forEach((tr) => tr.classList.toggle('selected', Number(tr.dataset.id) === id));
+  const panel = $('#detalle');
+  panel.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  try {
+    // El historial de asistencias solo lo ven técnicos y administradores
+    const [inc, historial] = await Promise.all([api.incidente(id),
+      tieneRol(...PERSONAL) ? api.historialIncidente(id) : Promise.resolve([])]);
+    pintarDetalle(inc, historial);
+  } catch (e) {
+    panel.innerHTML = `<div class="empty">No se pudo cargar el incidente.</div>`;
+    mostrarError(e);
+  }
+}
+
+function pintarDetalle(inc, historial) {
+  const panel = $('#detalle');
+  const personal = tieneRol(...PERSONAL);
+  const opciones = estado.catalogos.estados.map((e) =>
+    `<option value="${e.id}" ${e.id === inc.estado.id ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('');
+  const campoEstado = personal
+    ? `<dd style="display:flex;gap:8px"><select id="d-estado" aria-label="Estado">${opciones}</select>
+          <button class="btn small" id="d-guardar-estado" type="button">Actualizar</button></dd>`
+    : `<dd>${badgeEstadoIncidente(inc.estado.nombre)}</dd>`;
+  const asistente = personal ? `
+    <h3>Asistente inteligente</h3>
+    <div class="field">
+      <label for="d-pregunta">Consulta (vacío = usar la descripción del incidente)</label>
+      <textarea id="d-pregunta" placeholder="${esc(inc.descripcion)}"></textarea>
+    </div>
+    <div style="margin-top:8px"><button class="btn primary" id="d-asistir" type="button">Solicitar asistencia</button></div>
+    <div id="d-resultado"></div>
+
+    <h3>Historial de asistencias (${historial.length})</h3>
+    <div id="d-historial">${historial.length ? historial.map(renderConsulta).join('')
+      : '<p class="muted">Aún no se han generado asistencias para este incidente.</p>'}</div>`
+    : '<p class="muted">El técnico responsable gestiona este incidente. Aquí verá los cambios de estado.</p>';
+  panel.innerHTML = `
+    <div class="chart-head"><h2>#${inc.id} · ${esc(inc.titulo)}</h2>
+      ${personal ? '<button class="btn small" id="d-editar" type="button">Editar / reasignar</button>' : ''}</div>
+    <dl>
+      <dt>Descripción</dt><dd>${esc(inc.descripcion)}</dd>
+      <dt>Categoría</dt><dd>${esc(inc.categoria.nombre)}</dd>
+      <dt>Prioridad</dt><dd>${esc(inc.prioridad.nombre)}</dd>
+      <dt>Técnico responsable</dt><dd>${esc(inc.usuario.nombre)}</dd>
+      <dt>Solicitante</dt><dd>${inc.solicitante ? esc(inc.solicitante) : '<span class="muted">No registrado</span>'}</dd>
+      <dt>Creado</dt><dd>${fecha(inc.fechaCreacion)}</dd>
+      <dt>Resuelto</dt><dd>${fecha(inc.fechaResolucion)}${inc.horasResolucion != null ? ` <span class="muted">(${num(inc.horasResolucion, 1)} h)</span>` : ''}</dd>
+      <dt>SLA</dt><dd>${badgeSla(inc.sla.estado)} <span class="muted">${inc.sla.horasSla} h · vence ${fecha(inc.sla.vence)}${inc.sla.horasRestantes != null ? ' · ' + horasRestantes(inc.sla.horasRestantes) : ''}</span></dd>
+      <dt>Actualizado</dt><dd>${fecha(inc.fechaActualizacion)}</dd>
+      <dt>Estado</dt>
+      ${campoEstado}
+    </dl>
+    ${asistente}`;
+
+  if (!personal) return;
+  $('#d-editar').addEventListener('click', () => abrirEdicion(inc));
+
+  $('#d-guardar-estado').addEventListener('click', async () => {
+    try {
+      await api.cambiarEstadoIncidente(inc.id, Number($('#d-estado').value));
+      toast('Estado actualizado');
+      await cargar();
+      seleccionar(inc.id);
+    } catch (e) { mostrarError(e); }
+  });
+
+  $('#d-asistir').addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    const texto = $('#d-pregunta').value;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Consultando base de conocimiento…';
+    try {
+      // Si el campo está vacío no se envía 'pregunta' y el backend usa la descripción del incidente.
+      await api.solicitarAsistencia(inc.id, texto.trim() === '' ? undefined : texto);
+      seleccionar(inc.id);
+    } catch (e) {
+      mostrarError(e);
+      btn.disabled = false;
+      btn.textContent = 'Solicitar asistencia';
+    }
+  });
+
+  activarCalificaciones(panel, () => seleccionar(inc.id));
+}
+
+function abrirEdicion(inc) {
+  const f = $('#form-editar');
+  // Solo se ofrecen técnicos activos; el responsable actual se conserva aunque esté inactivo.
+  const usuarios = [...estado.catalogos.usuarios];
+  if (!usuarios.some((u) => u.id === inc.usuario.id)) {
+    usuarios.unshift({ id: inc.usuario.id, nombre: inc.usuario.nombre + ' (inactivo)' });
+  }
+  llenarSelect($('#e-usuario'), usuarios);
+  $('#e-id').textContent = '#' + inc.id;
+  f.titulo.value = inc.titulo;
+  f.descripcion.value = inc.descripcion;
+  f.categoriaId.value = inc.categoria.id;
+  f.prioridadId.value = inc.prioridad.id;
+  f.usuarioId.value = inc.usuario.id;
+  f.solicitante.value = inc.solicitante ?? '';
+  // Si lo registró una cuenta de solicitante, el nombre está ligado a esa cuenta
+  f.solicitante.disabled = inc.solicitanteConCuenta;
+  f.solicitante.title = inc.solicitanteConCuenta ? 'Registrado por la cuenta del solicitante' : '';
+  f.dataset.id = inc.id;
+  $('#e-errores').textContent = '';
+  $('#dlg-editar').showModal();
+}
+
+$('#e-cancelar').addEventListener('click', () => $('#dlg-editar').close());
+$('#form-editar').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = Number(e.target.dataset.id);
+  const datos = Object.fromEntries(new FormData(e.target));
+  ['categoriaId', 'prioridadId', 'usuarioId'].forEach((k) => datos[k] = Number(datos[k]));
+  try {
+    await api.actualizarIncidente(id, datos);
+    $('#dlg-editar').close();
+    toast(`Incidente #${id} actualizado`);
+    await cargar();
+    seleccionar(id);
+  } catch (err) {
+    $('#e-errores').textContent = err.campos ? Object.values(err.campos).join(' · ') : err.message;
+  }
+});
+
+// ---------- Eventos ----------
+$('#filtros').addEventListener('submit', (e) => { e.preventDefault(); estado.pagina = 0; cargar(); });
+$('#filtros').addEventListener('reset', () => setTimeout(() => { estado.pagina = 0; cargar(); }));
+$('#prev').addEventListener('click', () => { estado.pagina--; cargar(); });
+$('#next').addEventListener('click', () => { estado.pagina++; cargar(); });
+$('#tabla').addEventListener('click', (e) => {
+  const tr = e.target.closest('tr[data-id]');
+  if (tr) seleccionar(Number(tr.dataset.id));
+});
+
+const dlg = $('#dlg-nuevo');
+$('#btn-nuevo').addEventListener('click', () => { $('#n-errores').textContent = ''; dlg.showModal(); });
+$('#n-cancelar').addEventListener('click', () => dlg.close());
+$('#form-nuevo').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const datos = Object.fromEntries(new FormData(e.target));
+  ['categoriaId', 'prioridadId', 'usuarioId'].forEach((k) => datos[k] = Number(datos[k]));
+  if (tieneRol('SOLICITANTE')) { delete datos.usuarioId; delete datos.solicitante; }
+  try {
+    const creado = await api.crearIncidente(datos);
+    dlg.close();
+    e.target.reset();
+    toast(`Incidente #${creado.id} registrado`);
+    estado.pagina = 0;
+    await cargar();
+    seleccionar(creado.id);
+  } catch (err) {
+    $('#n-errores').textContent = err.campos ? Object.values(err.campos).join(' · ') : err.message;
+  }
+});
+
+iniciarLayout('incidentes.html').then(iniciar);
+</script>
+</body>
+</html>

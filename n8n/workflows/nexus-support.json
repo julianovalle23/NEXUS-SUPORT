@@ -1,0 +1,1257 @@
+{
+  "id": "nexus-support",
+  "name": "NEXUS Support - Indexación y asistencia RAG",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## NEXUS Support - Indexación y asistencia RAG\nSpring Boot invoca uno de los dos webhooks:\n- **POST /webhook/nexus/indexar** → rama superior.\n- **POST /webhook/nexus/rag** → rama inferior.\n\n**Configuración** guarda las URL y los modelos (sin secretos). Las claves están en las credenciales *OpenRouter account* y *NEXUS - Token interno*.\n\n**¿Es una indexación?** envía cada solicitud a su rama.",
+        "height": 360,
+        "width": 560,
+        "color": 7
+      },
+      "id": "c655fdcd-618d-3bf9-b9cf-44d2c9415cf8",
+      "name": "Nota general",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 1 · Indexación de la base de conocimiento\nLee los artículos desde Spring Boot, compara su hash SHA-256 con Qdrant, vectoriza solo lo nuevo o modificado (id del punto = id del artículo) y elimina de Qdrant los inactivos o no verificados.",
+        "height": 480,
+        "width": 2640,
+        "color": 4
+      },
+      "id": "a641078e-0734-339f-9b99-bea914e7d1ba",
+      "name": "Nota indexación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2 · Asistencia inteligente RAG\nValidar → embedding → búsqueda en Qdrant → umbral → validación de fuentes en PostgreSQL → generación con OpenRouter → respuesta con fuentes. Termina en RESPONDIDA, SIN_RESULTADOS o ERROR (con la etapa que falló).",
+        "height": 560,
+        "width": 2860,
+        "color": 5
+      },
+      "id": "d58afd61-0110-3236-b6b8-803ab53f3235",
+      "name": "Nota asistencia",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nexus/indexar",
+        "responseMode": "responseNode",
+        "options": { }
+      },
+      "id": "e4f33a9a-7afc-52cb-9698-caa0c1e0e32a",
+      "name": "Webhook indexación",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        100
+      ],
+      "webhookId": "4e33c533-0298-5a58-90cf-0a492fb481ed"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Configuración').first().json.QDRANT_URL }}/collections/{{ $('Configuración').first().json.QDRANT_COLLECTION }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ vectors: { size: Number($('Configuración').first().json.EMBEDDING_DIMENSION), distance: 'Cosine' } }) }}"
+      },
+      "id": "9662b2f5-1258-5bde-8992-4aef3c5e24d1",
+      "name": "Crear colección si no existe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Configuración').first().json.QDRANT_URL }}/collections/{{ $('Configuración').first().json.QDRANT_COLLECTION }}/index?wait=true",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ field_name: 'fuente_valida', field_schema: 'bool' }) }}"
+      },
+      "id": "81d211c7-751e-525a-bb36-0571008dde8e",
+      "name": "Índice de payload fuente_valida",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Configuración').first().json.BACKEND_URL }}/api/internal/articulos",
+        "options": {
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "e61925ac-450e-5b2c-9084-6d412266089b",
+      "name": "Obtener artículos (Spring Boot)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        0
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "nexusTokenIntern",
+          "name": "NEXUS - Token interno"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.QDRANT_URL }}/collections/{{ $('Configuración').first().json.QDRANT_COLLECTION }}/points/scroll",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ limit: 10000, with_payload: ['hash', 'articulo_id'], with_vector: false }) }}"
+      },
+      "id": "d13fc7a6-6624-5531-92dc-77d044304e28",
+      "name": "Vectores existentes en Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compara los artículos de la base relacional con los puntos ya indexados.\nconst articulos = $('Obtener artículos (Spring Boot)').first().json.articulos || [];\nconst puntos = $input.first().json.result?.points || [];\nconst forzar = $('Webhook indexación').first().json.body?.forzar === true;\n\nconst hashIndexado = new Map(puntos.map(p => [Number(p.id), p.payload?.hash ?? null]));\nconst idsEnBD = new Set();\nconst upserts = [];\nconst eliminar = [];\nlet sinCambios = 0;\n\nfor (const a of articulos) {\n  const id = Number(a.id);\n  idsEnBD.add(id);\n  const indexado = hashIndexado.has(id);\n  if (!a.fuenteValida) {            // inactivo o no verificado: no debe ser fuente\n    if (indexado) eliminar.push(id);\n    continue;\n  }\n  if (!forzar && indexado && hashIndexado.get(id) === a.hash) {\n    sinCambios++;                    // mismo contenido: no se vuelve a vectorizar\n    continue;\n  }\n  upserts.push(a);\n}\n// Puntos huérfanos (artículos que ya no existen en la base relacional)\nfor (const id of hashIndexado.keys()) {\n  if (!idsEnBD.has(id)) eliminar.push(id);\n}\n\nreturn [{ json: { upserts, eliminar, sinCambios, totalArticulos: articulos.length } }];"
+      },
+      "id": "016eba20-d003-5af3-8c2b-2f51c69748bd",
+      "name": "Detectar cambios",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.QDRANT_URL }}/collections/{{ $('Configuración').first().json.QDRANT_COLLECTION }}/points/delete?wait=true",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ points: $json.eliminar }) }}"
+      },
+      "id": "7f976412-f045-55a9-8a5f-e91435ce2750",
+      "name": "Eliminar vectores obsoletos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "294db16f-c6d7-5018-9b74-d74dbf876091",
+              "leftValue": "={{ $('Detectar cambios').first().json.upserts.length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": { }
+      },
+      "id": "d4918823-7fdd-5252-a1b1-0e81a58cc099",
+      "name": "¿Hay artículos para vectorizar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.OPENROUTER_BASE_URL }}/embeddings",
+        "options": {
+          "timeout": 120000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Title",
+              "value": "NEXUS Support"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Configuración').first().json.EMBEDDING_MODEL, input: $('Detectar cambios').first().json.upserts.map(a => a.texto) }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi"
+      },
+      "id": "4eef54d4-177f-573d-9b41-8f817610fedd",
+      "name": "Generar embeddings (OpenRouter)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2280,
+        -100
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "PvE6hq2SBOSib0Da",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { upserts } = $('Detectar cambios').first().json;\nconst respuesta = $input.first().json;\nconst data = (respuesta.data || []).slice().sort((a, b) => (a.index ?? 0) - (b.index ?? 0));\nif (data.length !== upserts.length) {\n  throw new Error(`OpenRouter devolvió ${data.length} embeddings para ${upserts.length} artículos: ` +\n                  JSON.stringify(respuesta.error || respuesta).slice(0, 300));\n}\nconst ahora = new Date().toISOString();\nconst points = upserts.map((a, i) => ({\n  id: Number(a.id),                 // id del artículo => upsert idempotente, sin duplicados\n  vector: data[i].embedding,\n  payload: {\n    articulo_id: Number(a.id),\n    titulo: a.titulo,\n    categoria: a.categoria,\n    hash: a.hash,\n    fuente_valida: true,\n    indexado_en: ahora,\n  },\n}));\nreturn [{ json: { points, dimension: points[0].vector.length, modelo: respuesta.model } }];"
+      },
+      "id": "b87a32da-44fb-5332-8d09-32c55e9b6273",
+      "name": "Construir puntos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Configuración').first().json.QDRANT_URL }}/collections/{{ $('Configuración').first().json.QDRANT_COLLECTION }}/points?wait=true",
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ points: $json.points }) }}"
+      },
+      "id": "98874d39-531f-5652-ba4a-65955b9acd24",
+      "name": "Guardar vectores en Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2720,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cambios = $('Detectar cambios').first().json;\nconst puntos = $('Construir puntos').first().json;\nreturn [{ json: {\n  estado: 'OK',\n  vectorizados: cambios.upserts.map(a => a.id),\n  eliminados: cambios.eliminar,\n  sinCambios: cambios.sinCambios,\n  totalArticulos: cambios.totalArticulos,\n  dimension: puntos.dimension,\n  modeloEmbeddings: puntos.modelo,\n} }];"
+      },
+      "id": "184e5821-c468-501e-ad21-85880eaa1be1",
+      "name": "Resumen indexación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2940,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cambios = $('Detectar cambios').first().json;\nreturn [{ json: {\n  estado: 'OK',\n  vectorizados: [],\n  eliminados: cambios.eliminar,\n  sinCambios: cambios.sinCambios,\n  totalArticulos: cambios.totalArticulos,\n} }];"
+      },
+      "id": "fed380b8-f9dd-5c12-84c8-76d31e2d9b3d",
+      "name": "Resumen sin cambios",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": { }
+      },
+      "id": "8a41aa08-81f2-5bd4-bb0f-b5341b008a2e",
+      "name": "Responder indexación",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nexus/rag",
+        "responseMode": "responseNode",
+        "options": { }
+      },
+      "id": "02dea15c-1b7b-5f93-b1f1-f41701b0d363",
+      "name": "Webhook RAG",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        520
+      ],
+      "webhookId": "b6e814cb-2e13-59b0-b531-c63e0bafc8d8"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || {};\nconst pregunta = String(b.pregunta ?? '').trim();\nconst umbral = Number(b.umbral ?? 0.45);\n// RF04: recuperar entre 3 y 5 soluciones\nconst topK = Math.min(Math.max(Number(b.topK ?? 5), 3), 5);\nconst minResultados = Math.max(Number(b.minResultados ?? 1), 1);\nconst incidente = b.incidente || {};\nreturn [{ json: {\n  valido: pregunta.length > 0 && umbral >= 0 && umbral <= 1,\n  consultaId: b.consultaId ?? null,\n  pregunta,\n  textoBusqueda: incidente.titulo ? `${incidente.titulo}. ${pregunta}` : pregunta,\n  incidente,\n  umbral,\n  topK,\n  minResultados,\n  simularFalloEmbeddings: b.simularFalloEmbeddings === true,\n} }];"
+      },
+      "id": "611154c9-5b8f-5a4b-9b2d-68b5a56b6ae0",
+      "name": "Validar solicitud",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dd89c234-48b0-5436-b157-c02aba638eda",
+              "leftValue": "={{ $json.valido }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": { }
+      },
+      "id": "b6ecabd4-2a3e-5ebc-b300-60708913d2a4",
+      "name": "¿Solicitud válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        940,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { estado: 'ERROR', etapa: 'VALIDACION', mensaje: 'La descripción del incidente está vacía o el umbral es inválido. No se ejecutó la búsqueda.' } }];"
+      },
+      "id": "bade8834-26b2-5978-8971-65675c637e01",
+      "name": "Error de validación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.simularFalloEmbeddings ? 'http://servicio-embeddings-no-disponible.invalid' : $('Configuración').first().json.OPENROUTER_BASE_URL }}/embeddings",
+        "options": {
+          "timeout": 30000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Title",
+              "value": "NEXUS Support"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Configuración').first().json.EMBEDDING_MODEL, input: $json.textoBusqueda }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi"
+      },
+      "id": "e9569e9f-a9b4-5ab8-8ba2-5dc96903eb3a",
+      "name": "Embedding de la consulta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        520
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "openRouterApi": {
+          "id": "PvE6hq2SBOSib0Da",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst vector = r.data?.[0]?.embedding;\nif (!Array.isArray(vector) || vector.length === 0) {\n  throw new Error('El servicio de embeddings no devolvió un vector: ' + JSON.stringify(r.error || r).slice(0, 300));\n}\nreturn [{ json: { vector, modelo: r.model } }];"
+      },
+      "id": "fbde1e9a-702d-5a87-9894-c106b7a6d0ad",
+      "name": "Verificar embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        520
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json.error || $input.first().json;\nconst mensaje = e.message || e.description || JSON.stringify(e).slice(0, 300);\nreturn [{ json: { estado: 'ERROR', etapa: 'EMBEDDINGS', mensaje: 'Falló el servicio de embeddings: ' + mensaje } }];"
+      },
+      "id": "136c5e86-9c98-5382-887d-10a09dd544a9",
+      "name": "Error en embeddings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.QDRANT_URL }}/collections/{{ $('Configuración').first().json.QDRANT_COLLECTION }}/points/query",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.vector, limit: $('Validar solicitud').first().json.topK, with_payload: true, filter: { must: [ { key: 'fuente_valida', match: { value: true } } ] } }) }}"
+      },
+      "id": "02ddf448-8604-5334-8c06-c5057306419e",
+      "name": "Búsqueda semántica en Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        520
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json.error || $input.first().json;\nreturn [{ json: { estado: 'ERROR', etapa: 'QDRANT', mensaje: 'Falló la búsqueda vectorial: ' + (e.message || JSON.stringify(e).slice(0, 300)) } }];"
+      },
+      "id": "6635151e-806e-5158-9e90-8538d18c0c7e",
+      "name": "Error en Qdrant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const req = $('Validar solicitud').first().json;\nconst puntos = $input.first().json.result?.points || [];\nconst candidatos = puntos.map(p => ({\n  articuloId: Number(p.payload?.articulo_id ?? p.id),\n  titulo: p.payload?.titulo,\n  categoria: p.payload?.categoria,\n  // similitud coseno acotada a [0, 1]\n  similitud: Math.round(Math.min(Math.max(p.score, 0), 1) * 10000) / 10000,\n}));\nconst relevantes = candidatos.filter(c => c.similitud >= req.umbral);\nreturn [{ json: {\n  candidatos,\n  relevantes,\n  ids: relevantes.map(r => r.articuloId),\n  mejorSimilitud: candidatos.length ? candidatos[0].similitud : null,\n} }];"
+      },
+      "id": "84cb878e-03d6-5163-a6cd-3867658d2d36",
+      "name": "Aplicar umbral",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.BACKEND_URL }}/api/internal/articulos/validar",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ids: $json.ids }) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "c308dc8c-d525-5c8d-9333-df6e9b1b03b1",
+      "name": "Validar fuentes en base relacional",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2040,
+        520
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "nexusTokenIntern",
+          "name": "NEXUS - Token interno"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json.error || $input.first().json;\nreturn [{ json: { estado: 'ERROR', etapa: 'VALIDACION_FUENTES', mensaje: 'No se pudieron validar las fuentes en la base relacional: ' + (e.message || '') } }];"
+      },
+      "id": "79c03b11-9010-5bb0-89f2-da29ae0b0ae9",
+      "name": "Error validando fuentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const req = $('Validar solicitud').first().json;\nconst { relevantes, mejorSimilitud } = $('Aplicar umbral').first().json;\nconst validas = new Map(($input.first().json.fuentes || []).map(f => [Number(f.id), f]));\n\n// Solo sobreviven los artículos que existen en la BD y siguen activos y verificados\nconst fuentes = relevantes\n  .filter(r => validas.has(r.articuloId))\n  .map(r => ({ ...r, articulo: validas.get(r.articuloId) }));\n\nconst contexto = fuentes.map((f, i) =>\n  `[Documento ${i + 1}] articuloId=${f.articuloId} | similitud=${f.similitud}\\n` +\n  `Título: ${f.articulo.titulo}\\nProblema: ${f.articulo.problema}\\nSíntomas: ${f.articulo.sintomas}\\n` +\n  `Causa: ${f.articulo.causa}\\nProcedimiento de solución: ${f.articulo.solucion}`\n).join('\\n\\n');\n\nconst inc = req.incidente;\nconst mensajes = [\n  { role: 'system', content: \"Eres el asistente técnico de la mesa de ayuda NEXUS Support. Reglas obligatorias:\\n1. Usa EXCLUSIVAMENTE la información de los documentos recuperados que se te entregan. No uses conocimiento externo ni inventes comandos, causas, herramientas o procedimientos que no aparezcan en ellos.\\n2. Si ninguno de los documentos describe el problema del incidente, responde con sin_informacion = true y explica en 'motivo' qué información falta. No propongas soluciones en ese caso.\\n3. Los pasos deben provenir de los procedimientos de solución de los documentos, adaptados al incidente.\\n4. En fuentes_usadas incluye solo los articuloId de los documentos que realmente utilizaste.\\n5. Escribe en español, en tono técnico y conciso.\\nResponde únicamente con un objeto JSON con esta forma exacta: {\\\"sin_informacion\\\": boolean, \\\"motivo\\\": string, \\\"solucion\\\": string, \\\"pasos\\\": [string], \\\"fuentes_usadas\\\": [number]}\" },\n  { role: 'user', content:\n      `INCIDENTE\\nTítulo: ${inc.titulo ?? '(sin título)'}\\nCategoría: ${inc.categoria ?? '-'}\\nPrioridad: ${inc.prioridad ?? '-'}\\n` +\n      `Descripción: ${req.pregunta}\\n\\nDOCUMENTOS RECUPERADOS\\n${contexto}` },\n];\n\nreturn [{ json: {\n  suficiente: fuentes.length >= req.minResultados,\n  fuentes,\n  mensajes,\n  mejorSimilitud,\n  descartadasPorBD: relevantes.length - fuentes.length,\n} }];"
+      },
+      "id": "5fd31f64-0003-518d-a3a3-ae39ca4dc632",
+      "name": "Construir contexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6ab6fdee-8d2c-5b2a-ab25-d112a67b333a",
+              "leftValue": "={{ $json.suficiente }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": { }
+      },
+      "id": "9618f0b9-58fc-5bda-8b48-685b816840e5",
+      "name": "¿Hay fuentes relevantes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2480,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const req = $('Validar solicitud').first().json;\nconst ctx = $input.first().json;\nconst mejor = ctx.mejorSimilitud;\nreturn [{ json: {\n  estado: 'SIN_RESULTADOS',\n  respuesta: 'No se encontró información suficiente en la base de conocimiento para este incidente. ' +\n             `Ningún artículo activo y verificado alcanzó la similitud mínima de ${req.umbral}` +\n             (mejor !== null ? ` (mejor similitud encontrada: ${mejor}).` : '.') +\n             ' Se recomienda escalar el caso y documentar la solución como un nuevo artículo.',\n  pasos: [],\n  fuentes: [],\n  mejorSimilitud: mejor,\n} }];"
+      },
+      "id": "a5d12115-c0c2-5027-87de-ba91526f3608",
+      "name": "Sin fuentes relevantes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración').first().json.OPENROUTER_BASE_URL }}/chat/completions",
+        "options": {
+          "timeout": 90000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Title",
+              "value": "NEXUS Support"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Configuración').first().json.CHAT_MODEL, temperature: 0.1, max_tokens: 1000, response_format: { type: 'json_object' }, messages: $json.mensajes }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi"
+      },
+      "id": "e72a3840-120d-5492-8586-7bfedcbf26d3",
+      "name": "Generar respuesta (OpenRouter)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2700,
+        420
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "openRouterApi": {
+          "id": "PvE6hq2SBOSib0Da",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Construir contexto').first().json;\nconst r = $input.first().json;\nconst contenido = r.choices?.[0]?.message?.content;\nif (!contenido) {\n  throw new Error('El modelo no devolvió contenido: ' + JSON.stringify(r.error || r).slice(0, 300));\n}\nlet salida;\ntry {\n  salida = JSON.parse(contenido.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, ''));\n} catch (e) {\n  throw new Error('La respuesta del modelo no es JSON válido');\n}\n\nconst permitidos = new Set(ctx.fuentes.map(f => f.articuloId));\nconst usadas = new Set((salida.fuentes_usadas || []).map(Number).filter(id => permitidos.has(id)));\n\nif (salida.sin_informacion === true || !salida.solucion) {\n  return [{ json: {\n    estado: 'SIN_RESULTADOS',\n    respuesta: 'Los documentos recuperados no contienen información suficiente para resolver este incidente. ' +\n               (salida.motivo || ''),\n    pasos: [],\n    fuentes: [],\n    mejorSimilitud: ctx.mejorSimilitud,\n    modelo: r.model,\n  } }];\n}\n\nreturn [{ json: {\n  estado: 'RESPONDIDA',\n  respuesta: salida.solucion,\n  pasos: Array.isArray(salida.pasos) ? salida.pasos.map(String) : [],\n  fuentes: ctx.fuentes.map(f => ({\n    articuloId: f.articuloId,\n    titulo: f.articulo.titulo,\n    categoria: f.categoria,\n    similitud: f.similitud,\n    usada: usadas.has(f.articuloId),\n  })),\n  mejorSimilitud: ctx.mejorSimilitud,\n  modelo: r.model,\n} }];"
+      },
+      "id": "705a939d-1667-5c67-8f7b-016ea4e01cf6",
+      "name": "Formatear respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2920,
+        420
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json.error || $input.first().json;\nreturn [{ json: { estado: 'ERROR', etapa: 'GENERACION', mensaje: 'Falló la generación de la respuesta: ' + (e.message || JSON.stringify(e).slice(0, 300)) } }];"
+      },
+      "id": "3639c7a3-ee15-5d14-ab14-011fc469d5eb",
+      "name": "Error en generación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3140,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": { }
+      },
+      "id": "8cb1187e-18a9-546a-803b-4553940a02c0",
+      "name": "Responder asistencia",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3360,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6e5aa136-38f8-32b9-b8d6-14ab695297c6",
+              "name": "BACKEND_URL",
+              "value": "http://host.docker.internal:8080",
+              "type": "string"
+            },
+            {
+              "id": "fab060b2-9300-378c-aa65-241043603413",
+              "name": "QDRANT_URL",
+              "value": "http://host.docker.internal:6333",
+              "type": "string"
+            },
+            {
+              "id": "4756d5b3-c112-3957-9437-3f8677627fd8",
+              "name": "QDRANT_COLLECTION",
+              "value": "articulos_conocimiento",
+              "type": "string"
+            },
+            {
+              "id": "01bbae8b-6929-3c52-aa13-b4e26e7b82cd",
+              "name": "OPENROUTER_BASE_URL",
+              "value": "https://openrouter.ai/api/v1",
+              "type": "string"
+            },
+            {
+              "id": "54902a87-5f14-3ddf-97af-4ba3b0720456",
+              "name": "EMBEDDING_MODEL",
+              "value": "openai/text-embedding-3-small",
+              "type": "string"
+            },
+            {
+              "id": "8cfa2971-a5fe-3073-b5f0-6d013357cded",
+              "name": "EMBEDDING_DIMENSION",
+              "value": "1536",
+              "type": "string"
+            },
+            {
+              "id": "338a33e7-3763-3ddf-b535-7f8f5535017a",
+              "name": "CHAT_MODEL",
+              "value": "openai/gpt-4o-mini",
+              "type": "string"
+            }
+          ]
+        },
+        "options": { }
+      },
+      "id": "0713286f-c9a6-311c-8d30-7312a4d9b080",
+      "name": "Configuración",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        310
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4f56875d-4843-3493-9f1e-6f01efe5b121",
+              "leftValue": "={{ $('Webhook indexación').isExecuted }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": { }
+      },
+      "id": "07fd3c62-ac51-3896-b6eb-64a7ba8d8986",
+      "name": "¿Es una indexación?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        310
+      ]
+    }
+  ],
+  "connections": {
+    "Crear colección si no existe": {
+      "main": [
+        [
+          {
+            "node": "Índice de payload fuente_valida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Índice de payload fuente_valida": {
+      "main": [
+        [
+          {
+            "node": "Obtener artículos (Spring Boot)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener artículos (Spring Boot)": {
+      "main": [
+        [
+          {
+            "node": "Vectores existentes en Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vectores existentes en Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Detectar cambios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar cambios": {
+      "main": [
+        [
+          {
+            "node": "Eliminar vectores obsoletos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eliminar vectores obsoletos": {
+      "main": [
+        [
+          {
+            "node": "¿Hay artículos para vectorizar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar embeddings (OpenRouter)": {
+      "main": [
+        [
+          {
+            "node": "Construir puntos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir puntos": {
+      "main": [
+        [
+          {
+            "node": "Guardar vectores en Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar vectores en Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Resumen indexación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumen indexación": {
+      "main": [
+        [
+          {
+            "node": "Responder indexación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumen sin cambios": {
+      "main": [
+        [
+          {
+            "node": "Responder indexación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay artículos para vectorizar?": {
+      "main": [
+        [
+          {
+            "node": "Generar embeddings (OpenRouter)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resumen sin cambios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar solicitud": {
+      "main": [
+        [
+          {
+            "node": "¿Solicitud válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Solicitud válida?": {
+      "main": [
+        [
+          {
+            "node": "Embedding de la consulta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error de validación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error de validación": {
+      "main": [
+        [
+          {
+            "node": "Responder asistencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding de la consulta": {
+      "main": [
+        [
+          {
+            "node": "Verificar embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error en embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar embedding": {
+      "main": [
+        [
+          {
+            "node": "Búsqueda semántica en Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error en embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error en embeddings": {
+      "main": [
+        [
+          {
+            "node": "Responder asistencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Búsqueda semántica en Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Aplicar umbral",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error en Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error en Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Responder asistencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar umbral": {
+      "main": [
+        [
+          {
+            "node": "Validar fuentes en base relacional",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar fuentes en base relacional": {
+      "main": [
+        [
+          {
+            "node": "Construir contexto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error validando fuentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error validando fuentes": {
+      "main": [
+        [
+          {
+            "node": "Responder asistencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir contexto": {
+      "main": [
+        [
+          {
+            "node": "¿Hay fuentes relevantes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay fuentes relevantes?": {
+      "main": [
+        [
+          {
+            "node": "Generar respuesta (OpenRouter)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sin fuentes relevantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sin fuentes relevantes": {
+      "main": [
+        [
+          {
+            "node": "Responder asistencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar respuesta (OpenRouter)": {
+      "main": [
+        [
+          {
+            "node": "Formatear respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error en generación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear respuesta": {
+      "main": [
+        [
+          {
+            "node": "Responder asistencia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error en generación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error en generación": {
+      "main": [
+        [
+          {
+            "node": "Responder asistencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook indexación": {
+      "main": [
+        [
+          {
+            "node": "Configuración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook RAG": {
+      "main": [
+        [
+          {
+            "node": "Configuración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuración": {
+      "main": [
+        [
+          {
+            "node": "¿Es una indexación?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es una indexación?": {
+      "main": [
+        [
+          {
+            "node": "Crear colección si no existe",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validar solicitud",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": { }
+}
