@@ -68,7 +68,10 @@ const PERSONAL = ['TECNICO', 'ADMIN'];
 const PAGINAS = [
   ['index.html', 'Dashboard', PERSONAL],
   ['incidentes.html', 'Incidentes', ['SOLICITANTE', ...PERSONAL]],
+  ['alertas.html', 'Alertas SLA', PERSONAL],
+  ['problemas.html', 'Problemas', PERSONAL],
   ['articulos.html', 'Base de conocimiento', PERSONAL],
+  ['importaciones.html', 'Importar artículos', ['ADMIN']],
   ['consultas.html', 'Historial IA', PERSONAL],
   ['usuarios.html', 'Usuarios', ['ADMIN']],
 ];
@@ -194,6 +197,9 @@ const ESTADO_SLA = {
   VENCIDO: { txt: 'Vencido', cls: 'err' },
   CUMPLIDO: { txt: 'SLA cumplido', cls: 'ok' },
   INCUMPLIDO: { txt: 'SLA incumplido', cls: 'err' },
+  // Solo primera respuesta
+  SIN_OBJETIVO: { txt: 'Sin objetivo', cls: '' },
+  SIN_DATOS: { txt: 'Sin datos', cls: '' },
 };
 
 function badgeSla(estado) {

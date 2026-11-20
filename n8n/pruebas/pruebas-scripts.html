@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Pruebas de scripts n8n</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; background: #fff; color: #222; }
+  .ok { color: #1a7f37; } .falla { color: #b42318; font-weight: 600; }
+  li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<h1>Pruebas unitarias de los nodos Code</h1>
+<p id="resumen">Ejecutando…</p>
+<ul id="lista"></ul>
+<script src="pruebas-scripts.js"></script>
+<script>
+window.__correr().then((r) => {
+  const fallas = r.filter(x => x[0] !== 'OK');
+  document.getElementById('resumen').textContent = `${r.length - fallas.length}/${r.length} pruebas correctas`;
+  document.getElementById('resumen').className = fallas.length ? 'falla' : 'ok';
+  document.getElementById('lista').innerHTML = r.map(([e, t, m]) =>
+    `<li class="${e === 'OK' ? 'ok' : 'falla'}">${e} · ${t}${m ? ' — ' + m : ''}</li>`).join('');
+}).catch((e) => { document.getElementById('resumen').textContent = 'Error: ' + e.message; });
+</script>
+</body>
+</html>

@@ -1,19 +1,24 @@
 package com.nexus.support.repository;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.nexus.support.domain.Incidente;
 
+import jakarta.persistence.LockModeType;
+
 public interface IncidenteRepository extends JpaRepository<Incidente, Long> {
 
-    @EntityGraph(attributePaths = {"categoria", "prioridad", "estado", "usuario"})
+    @EntityGraph(attributePaths = {"categoria", "prioridad", "estado", "usuario", "elemento", "problema", "seguimientoDe"})
     @Query("""
             SELECT i FROM Incidente i
             WHERE (:categoriaId IS NULL OR i.categoria.id = :categoriaId)
@@ -34,4 +39,24 @@ public interface IncidenteRepository extends JpaRepository<Incidente, Long> {
                            @Param("hasta") LocalDateTime hasta,
                            @Param("texto") String texto,
                            Pageable pageable);
+
+    @EntityGraph(attributePaths = {"estado", "prioridad"})
+    List<Incidente> findByProblemaIdOrderByFechaCreacionDesc(Long problemaId);
+
+    /** Por problema: [problemaId, incidentes, incidentes no finalizados]. */
+    @Query("""
+            SELECT i.problema.id, COUNT(i), SUM(CASE WHEN i.estado.esFinal = false THEN 1 ELSE 0 END)
+            FROM Incidente i
+            WHERE i.problema IS NOT NULL
+            GROUP BY i.problema.id
+            """)
+    List<Object[]> conteoPorProblema();
+
+    /**
+     * SELECT ... FOR UPDATE: dos cambios simultáneos sobre el mismo incidente se ejecutan en serie y el
+     * segundo valida la transición contra el estado que dejó el primero.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT i FROM Incidente i WHERE i.id = :id")
+    Optional<Incidente> findParaModificar(@Param("id") Long id);
 }

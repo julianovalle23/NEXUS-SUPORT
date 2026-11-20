@@ -22,6 +22,9 @@ public class Calificacion {
     @Column(length = 500)
     private String comentario;
 
+    /** Si la solución sugerida resolvió el incidente; null = no indicado. */
+    private Boolean resolvio;
+
     @Column(nullable = false)
     private LocalDateTime fecha;
 
@@ -44,5 +47,7 @@ public class Calificacion {
     public void setPuntuacion(Short puntuacion) { this.puntuacion = puntuacion; }
     public String getComentario() { return comentario; }
     public void setComentario(String comentario) { this.comentario = comentario; }
+    public Boolean getResolvio() { return resolvio; }
+    public void setResolvio(Boolean resolvio) { this.resolvio = resolvio; }
     public LocalDateTime getFecha() { return fecha; }
 }

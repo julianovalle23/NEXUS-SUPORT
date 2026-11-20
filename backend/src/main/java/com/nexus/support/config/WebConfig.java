@@ -2,6 +2,8 @@ package com.nexus.support.config;
 
 import java.time.Duration;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -17,6 +19,8 @@ import io.swagger.v3.oas.models.info.Info;
 public class WebConfig implements WebMvcConfigurer {
 
     public static final String HEADER_INTERNO = "X-Internal-Token";
+
+    private static final Logger log = LoggerFactory.getLogger(WebConfig.class);
 
     private final NexusProperties props;
 
@@ -40,13 +44,38 @@ public class WebConfig implements WebMvcConfigurer {
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE");
     }
 
-    /** Cliente HTTP hacia n8n con timeouts explícitos para no bloquear hilos indefinidamente. */
+    /** Cliente HTTP del flujo RAG: espera corta, porque el usuario está aguardando la respuesta. */
     @Bean
     RestClient n8nRestClient() {
+        return clienteN8n(props.rag().timeoutSegundos());
+    }
+
+    /**
+     * Cliente HTTP del flujo de indexación: una reindexación completa puede durar minutos, así que
+     * su espera es independiente de la del RAG y supera el executionTimeout del flujo en n8n.
+     */
+    @Bean
+    RestClient n8nIndexacionRestClient() {
+        return clienteN8n(props.n8n().indexacionTimeoutSegundos());
+    }
+
+    /**
+     * Timeouts explícitos para no bloquear hilos indefinidamente. Los webhooks de n8n exigen el mismo
+     * token interno que protege /api/internal/** (credencial Header Auth «NEXUS - Token interno»);
+     * sin él n8n responde 403. El valor nunca se registra en logs.
+     */
+    private RestClient clienteN8n(int timeoutSegundos) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
-        factory.setReadTimeout(Duration.ofSeconds(props.rag().timeoutSegundos()));
-        return RestClient.builder().requestFactory(factory).build();
+        factory.setReadTimeout(Duration.ofSeconds(timeoutSegundos));
+        RestClient.Builder builder = RestClient.builder().requestFactory(factory);
+        String token = props.internalToken();
+        if (token == null || token.isBlank()) {
+            log.warn("INTERNAL_API_TOKEN no está configurado: n8n rechazará las llamadas de indexación y asistencia (403)");
+        } else {
+            builder.defaultHeader(HEADER_INTERNO, token);
+        }
+        return builder.build();
     }
 
     @Bean

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alertas SLA · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Alertas de SLA</h1>
+      <p class="sub">Se generan automáticamente cada pocos minutos con reglas sobre los plazos, sin IA.
+        <strong>Aviso</strong>: al incidente le queda el 25 % del plazo o menos.
+        <strong>Escalamiento</strong>: el plazo venció; lo ven también los administradores.
+        Una alerta deja de aplicar (<em>Superada</em>) cuando el incidente se resuelve, recibe su primera respuesta o
+        cambia de prioridad. Atenderla no detiene el SLA.</p>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button" id="btn-revisar" data-roles="ADMIN">Revisar ahora</button>
+    </div>
+  </div>
+
+  <section class="kpis" id="kpis"></section>
+
+  <form class="filters card" id="filtros">
+    <div class="field"><label for="f-estado">Estado</label>
+      <select id="f-estado" name="estado">
+        <option value="PENDIENTE">Pendientes</option>
+        <option value="ATENDIDA">Atendidas</option>
+        <option value="SUPERADA">Superadas</option>
+        <option value="">Todas</option>
+      </select></div>
+  </form>
+
+  <section class="card" style="margin-top:16px">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Nivel</th><th>Plazo</th><th>Incidente</th><th>Prioridad</th><th>Responsable</th>
+          <th>Vence</th><th>Estado</th><th>Detalle</th><th></th></tr></thead>
+        <tbody id="tabla"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const NIVEL = { AVISO: ['Aviso', 'warn'], ESCALAMIENTO: ['Escalamiento', 'err'] };
+const TIPO = { RESOLUCION: 'Resolución', PRIMERA_RESPUESTA: 'Primera respuesta' };
+const ESTADO = { PENDIENTE: ['Pendiente', 'info'], ATENDIDA: ['Atendida', 'ok'], SUPERADA: ['Superada', ''] };
+
+const badge = (mapa, v) => {
+  const [txt, cls] = mapa[v] ?? [v, ''];
+  return `<span class="badge ${cls}">${esc(txt)}</span>`;
+};
+
+/** Un técnico solo atiende avisos; un escalamiento lo cierra un administrador. */
+const puedeAtender = (a) => a.estado === 'PENDIENTE' && (a.nivel === 'AVISO' || tieneRol('ADMIN'));
+
+function detalle(a) {
+  return [
+    a.responsableAlGenerar !== a.responsable.nombre ? `avisado a ${a.responsableAlGenerar}` : null,
+    `generada ${fecha(a.generadaEn)}`,
+    a.atendidaPor ? `atendida por ${a.atendidaPor}` : null,
+    a.fechaCierre ? `cerrada ${fecha(a.fechaCierre)}` : null,
+  ].filter(Boolean).map(esc).join(' · ') + (a.nota ? `<div>“${esc(a.nota)}”</div>` : '');
+}
+
+async function cargar() {
+  try {
+    const r = await api.alertasSla($('#f-estado').value);
+    $('#kpis').innerHTML = `
+      <div class="kpi card"><div class="label">Pendientes</div><div class="value">${num(r.pendientes)}</div></div>
+      <div class="kpi card"><div class="label">Escalamientos pendientes</div><div class="value">${num(r.escalamientosPendientes)}</div></div>`;
+    $('#tabla').innerHTML = r.alertas.length ? r.alertas.map((a) => `
+      <tr>
+        <td>${badge(NIVEL, a.nivel)}</td>
+        <td>${esc(TIPO[a.tipo] ?? a.tipo)}</td>
+        <td><a href="incidentes.html?id=${a.incidente.id}">#${a.incidente.id} ${esc(a.incidente.nombre)}</a>
+          <div class="muted">${esc(a.estadoIncidente)}</div></td>
+        <td>${esc(a.prioridad)}</td>
+        <td>${esc(a.responsable.nombre)}</td>
+        <td class="muted">${fecha(a.vence)}</td>
+        <td>${badge(ESTADO, a.estado)}</td>
+        <td class="muted">${detalle(a)}</td>
+        <td>${puedeAtender(a) ? `<button class="btn small" type="button" data-atender="${a.id}">Atender</button>` : ''}</td>
+      </tr>`).join('') : '<tr><td colspan="9" class="empty">No hay alertas con este filtro.</td></tr>';
+  } catch (e) { mostrarError(e); }
+}
+
+$('#f-estado').addEventListener('change', cargar);
+$('#tabla').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-atender]');
+  if (!b) return;
+  const nota = prompt('Nota opcional (qué se hizo o se decidió). La alerta se cierra; el SLA del incidente sigue corriendo.');
+  if (nota === null) return;
+  try {
+    await api.atenderAlerta(Number(b.dataset.atender), nota.slice(0, 500));
+    toast('Alerta atendida');
+    cargar();
+  } catch (err) { mostrarError(err); }
+});
+$('#btn-revisar').addEventListener('click', async () => {
+  try {
+    const r = await api.revisarAlertas();
+    toast(`Revisión: ${num(r.generadas)} alertas nuevas, ${num(r.superadas)} superadas`);
+    cargar();
+  } catch (e) { mostrarError(e); }
+});
+
+iniciarLayout('alertas.html').then(cargar);
+</script>
+</body>
+</html>

@@ -63,7 +63,8 @@ public class AnaliticaService {
     /** Todos los indicadores del dashboard en una sola llamada, con los mismos filtros. */
     public Dashboard dashboard(Filtro f, String granularidad) {
         return new Dashboard(f, resumen(f), porCategoria(f), porPrioridad(f), porEstado(f),
-                tendencia(f, granularidad), granularidad, recurrentes(f, 8), asistencia(f), slaOperativo(f));
+                tendencia(f, granularidad), granularidad, recurrentes(f, 8), asistencia(f), slaOperativo(f),
+                repo.porElemento(f, LIMITE_LISTAS));
     }
 
     /** Incidentes no finalizados frente al SLA de su prioridad, calculado en SQL con la hora actual del servidor. */
@@ -80,7 +81,8 @@ public class AnaliticaService {
         List<CoberturaCategoria> cobertura = repo.cobertura(f);
         long sinFuentes = cobertura.stream().mapToLong(CoberturaCategoria::sinResultados).sum();
         return new Conocimiento(uso.stream().limit(LIMITE_LISTAS).toList(), sinFuentes,
-                repo.consultasSinFuentes(f, LIMITE_LISTAS), cobertura, recomendaciones(uso, cobertura));
+                repo.consultasSinFuentes(f, LIMITE_LISTAS), cobertura, repo.efectividad(f),
+                recomendaciones(uso, cobertura));
     }
 
     static List<Recomendacion> recomendaciones(List<ArticuloUso> uso, List<CoberturaCategoria> cobertura) {

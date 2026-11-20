@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Problemas · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Problemas</h1>
+      <p class="sub">Causas comunes de incidentes repetidos. Una causa solo se confirma con evidencia.</p>
+    </div>
+    <button class="btn primary" id="btn-nuevo" type="button">+ Nuevo problema</button>
+  </div>
+
+  <form class="filters card" id="filtros">
+    <div class="field"><label for="f-estado">Estado</label><select id="f-estado" name="estado"></select></div>
+    <button class="btn" type="submit">Filtrar</button>
+    <span class="muted" id="total"></span>
+  </form>
+
+  <div class="layout-split">
+    <section class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Problema</th><th>Estado</th><th>Elemento</th><th class="num">Incidentes</th><th class="num">Abiertos</th></tr></thead>
+          <tbody id="tabla"></tbody>
+        </table>
+      </div>
+    </section>
+    <section class="card detail" id="detalle">
+      <div class="empty">Seleccione un problema para ver sus incidentes.</div>
+    </section>
+  </div>
+</main>
+
+<dialog id="dlg">
+  <form id="form" method="dialog">
+    <h2 id="dlg-titulo">Nuevo problema</h2>
+    <div class="field"><label for="p-titulo">Título *</label><input id="p-titulo" name="titulo" maxlength="200" required></div>
+    <div class="field"><label for="p-descripcion">Descripción *</label><textarea id="p-descripcion" name="descripcion" maxlength="5000" required></textarea></div>
+    <div class="field"><label for="p-elemento">Equipo, aplicación o servicio</label><select id="p-elemento" name="elementoId"></select></div>
+    <div class="field"><label for="p-causa">Causa (hipótesis mientras no haya evidencia)</label><textarea id="p-causa" name="causa" maxlength="5000"></textarea></div>
+    <div class="field"><label for="p-evidencia">Evidencia que respalda la causa</label><textarea id="p-evidencia" name="evidenciaCausa" maxlength="5000" placeholder="Pruebas, registros, incidentes reproducidos…"></textarea></div>
+    <div class="field"><label for="p-temporal">Solución temporal</label><textarea id="p-temporal" name="solucionTemporal" maxlength="5000"></textarea></div>
+    <div class="field"><label for="p-definitiva">Solución definitiva</label><textarea id="p-definitiva" name="solucionDefinitiva" maxlength="5000"></textarea></div>
+    <div class="errors" id="p-errores"></div>
+    <div class="actions">
+      <button class="btn" type="button" id="p-cancelar">Cancelar</button>
+      <button class="btn primary" type="submit">Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const ESTADOS = {
+  ABIERTO: { txt: 'Abierto', cls: 'warn' },
+  EN_ANALISIS: { txt: 'En análisis', cls: 'warn' },
+  CAUSA_CONFIRMADA: { txt: 'Causa confirmada', cls: 'ok' },
+  CERRADO: { txt: 'Cerrado', cls: '' },
+};
+const st = { catalogos: null, seleccionado: null, actual: null };
+
+function badgeProblema(estado) {
+  const e = ESTADOS[estado] ?? { txt: estado, cls: '' };
+  return `<span class="badge ${e.cls}">${esc(e.txt)}</span>`;
+}
+
+function texto(v) {
+  return v ? esc(v) : '<span class="muted">Sin registrar</span>';
+}
+
+async function cargar() {
+  try {
+    const lista = await api.problemas(Object.fromEntries(new FormData($('#filtros'))));
+    $('#total').textContent = `${lista.length} problema(s)`;
+    $('#tabla').innerHTML = lista.length ? lista.map((p) => `
+      <tr data-id="${p.id}" class="${p.id === st.seleccionado ? 'selected' : ''}">
+        <td>${p.id}</td><td>${esc(p.titulo)}</td><td>${badgeProblema(p.estado)}</td>
+        <td>${p.elemento ? esc(p.elemento.nombre) : '<span class="muted">—</span>'}</td>
+        <td class="num">${num(p.incidentes)}</td><td class="num">${num(p.incidentesAbiertos)}</td>
+      </tr>`).join('') : '<tr><td colspan="6" class="muted">No hay problemas registrados.</td></tr>';
+  } catch (e) { mostrarError(e); }
+}
+
+async function seleccionar(id) {
+  st.seleccionado = id;
+  document.querySelectorAll('#tabla tr').forEach((tr) => tr.classList.toggle('selected', Number(tr.dataset.id) === id));
+  try {
+    st.actual = await api.problema(id);
+    pintarDetalle(st.actual);
+  } catch (e) { mostrarError(e); }
+}
+
+function pintarDetalle(p) {
+  const opciones = Object.entries(ESTADOS).map(([k, v]) =>
+    `<option value="${k}" ${k === p.estado ? 'selected' : ''}>${esc(v.txt)}</option>`).join('');
+  const causa = p.causa
+    ? `${esc(p.causa)} ${p.estado === 'CAUSA_CONFIRMADA' ? '<span class="badge ok">Confirmada</span>' : '<span class="badge warn">Hipótesis</span>'}`
+    : '<span class="muted">Sin registrar</span>';
+  $('#detalle').innerHTML = `
+    <div class="chart-head"><h2>#${p.id} · ${esc(p.titulo)}</h2>
+      <button class="btn small" id="d-editar" type="button">Editar</button></div>
+    <dl>
+      <dt>Descripción</dt><dd>${esc(p.descripcion)}</dd>
+      <dt>Elemento</dt><dd>${p.elemento ? esc(p.elemento.nombre) : '<span class="muted">No indicado</span>'}</dd>
+      <dt>Causa</dt><dd>${causa}</dd>
+      <dt>Evidencia</dt><dd>${texto(p.evidenciaCausa)}</dd>
+      <dt>Solución temporal</dt><dd>${texto(p.solucionTemporal)}</dd>
+      <dt>Solución definitiva</dt><dd>${texto(p.solucionDefinitiva)}</dd>
+      <dt>Registrado</dt><dd>${fecha(p.fechaCreacion)} <span class="muted">por ${esc(p.creador.nombre)}</span></dd>
+      <dt>Cerrado</dt><dd>${fecha(p.fechaCierre)}</dd>
+      <dt>Estado</dt><dd style="display:flex;gap:8px"><select id="d-estado" aria-label="Estado">${opciones}</select>
+        <button class="btn small" id="d-guardar-estado" type="button">Actualizar</button></dd>
+    </dl>
+    ${p.causaRespaldada ? '' : '<p class="muted">Para confirmar la causa registre la causa y la evidencia.</p>'}
+
+    <h3>Incidentes vinculados (${p.incidentes.length})</h3>
+    ${p.estado === 'CERRADO' ? '<p class="muted">El problema está cerrado: reábralo para vincular incidentes.</p>' : `
+    <form id="f-vincular" style="display:flex;gap:8px;align-items:end">
+      <div class="field"><label for="v-incidente">Número de incidente</label><input id="v-incidente" type="number" min="1" required></div>
+      <button class="btn small" type="submit">Vincular</button>
+    </form>`}
+    ${p.incidentes.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>Incidente</th><th>Estado</th><th>Prioridad</th><th>Creado</th><th></th></tr></thead>
+      <tbody>${p.incidentes.map((i) => `<tr>
+        <td><a href="incidentes.html?id=${i.id}">${i.id}</a></td><td>${esc(i.titulo)}</td>
+        <td>${badgeEstadoIncidente(i.estado.nombre)}</td><td>${esc(i.prioridad.nombre)}</td><td>${fecha(i.fechaCreacion)}</td>
+        <td><button class="btn small" type="button" data-desvincular="${i.id}">Desvincular</button></td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="muted">Aún no hay incidentes vinculados.</p>'}`;
+
+  $('#d-editar').addEventListener('click', () => abrir(p));
+  $('#d-guardar-estado').addEventListener('click', () =>
+    accion(() => api.estadoProblema(p.id, $('#d-estado').value), 'Estado actualizado'));
+  $('#f-vincular')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    accion(() => api.vincularIncidente(p.id, Number($('#v-incidente').value)), 'Incidente vinculado');
+  });
+  $('#detalle').querySelectorAll('[data-desvincular]').forEach((b) => b.addEventListener('click', () =>
+    accion(() => api.desvincularIncidente(p.id, Number(b.dataset.desvincular)), 'Incidente desvinculado')));
+}
+
+/** Ejecuta una acción del detalle y refresca listado y detalle con la respuesta del servidor. */
+async function accion(fn, mensaje) {
+  try {
+    st.actual = await fn();
+    toast(mensaje);
+    pintarDetalle(st.actual);
+    await cargar();
+  } catch (e) { mostrarError(e); }
+}
+
+function abrir(p) {
+  const f = $('#form');
+  f.reset();
+  const elementos = st.catalogos.elementos.map((e) => ({ id: e.id, nombre: e.nombre }));
+  if (p?.elemento && !elementos.some((e) => e.id === p.elemento.id)) {
+    elementos.unshift({ id: p.elemento.id, nombre: p.elemento.nombre + ' (inactivo)' });
+  }
+  llenarSelect($('#p-elemento'), elementos, { vacio: 'No aplica' });
+  $('#dlg-titulo').textContent = p ? `Editar problema #${p.id}` : 'Nuevo problema';
+  f.dataset.id = p?.id ?? '';
+  if (p) {
+    f.titulo.value = p.titulo;
+    f.descripcion.value = p.descripcion;
+    f.elementoId.value = p.elemento?.id ?? '';
+    f.causa.value = p.causa ?? '';
+    f.evidenciaCausa.value = p.evidenciaCausa ?? '';
+    f.solucionTemporal.value = p.solucionTemporal ?? '';
+    f.solucionDefinitiva.value = p.solucionDefinitiva ?? '';
+  }
+  $('#p-errores').textContent = '';
+  $('#dlg').showModal();
+}
+
+$('#form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const datos = Object.fromEntries(new FormData(e.target));
+  datos.elementoId = datos.elementoId ? Number(datos.elementoId) : null;
+  const id = e.target.dataset.id ? Number(e.target.dataset.id) : null;
+  try {
+    const p = id ? await api.actualizarProblema(id, datos) : await api.crearProblema(datos);
+    $('#dlg').close();
+    toast(id ? `Problema #${p.id} actualizado` : `Problema #${p.id} registrado`);
+    st.seleccionado = p.id;
+    st.actual = p;
+    await cargar();
+    pintarDetalle(p);
+  } catch (err) {
+    $('#p-errores').textContent = err.campos ? Object.values(err.campos).join(' · ') : err.message;
+  }
+});
+
+$('#p-cancelar').addEventListener('click', () => $('#dlg').close());
+$('#btn-nuevo').addEventListener('click', () => abrir(null));
+$('#filtros').addEventListener('submit', (e) => { e.preventDefault(); cargar(); });
+$('#tabla').addEventListener('click', (e) => {
+  const tr = e.target.closest('tr[data-id]');
+  if (tr) seleccionar(Number(tr.dataset.id));
+});
+
+async function iniciar() {
+  try { st.catalogos = await api.catalogos(); } catch (e) { mostrarError(e); return; }
+  llenarSelect($('#f-estado'), Object.entries(ESTADOS).map(([k, v]) => ({ id: k, nombre: v.txt })), { vacio: 'Todos' });
+  await cargar();
+  const id = new URLSearchParams(location.search).get('id');
+  if (id) seleccionar(Number(id));
+}
+
+iniciarLayout('problemas.html').then(iniciar);
+</script>
+</body>
+</html>

@@ -33,6 +33,14 @@ public class ConsultaIA {
     @Column(name = "detalle_error", columnDefinition = "text")
     private String detalleError;
 
+    /** Identificador de la solicitud a n8n (cabecera X-Correlation-Id). */
+    @Column(name = "correlacion_id", length = 64)
+    private String correlacionId;
+
+    /** Ejecución de n8n que atendió la consulta, para inspeccionarla; null si el flujo no la informó. */
+    @Column(name = "n8n_ejecucion_id", length = 64)
+    private String ejecucionN8n;
+
     @OneToOne(mappedBy = "consulta", fetch = FetchType.LAZY)
     private RespuestaIA respuesta;
 
@@ -65,4 +73,9 @@ public class ConsultaIA {
     public String getDetalleError() { return detalleError; }
     public RespuestaIA getRespuesta() { return respuesta; }
     public void setRespuesta(RespuestaIA respuesta) { this.respuesta = respuesta; }
+
+    public String getCorrelacionId() { return correlacionId; }
+    public void setCorrelacionId(String correlacionId) { this.correlacionId = correlacionId; }
+    public String getEjecucionN8n() { return ejecucionN8n; }
+    public void setEjecucionN8n(String ejecucionN8n) { this.ejecucionN8n = ejecucionN8n; }
 }

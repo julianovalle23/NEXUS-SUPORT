@@ -2,6 +2,7 @@ package com.nexus.support.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.*;
@@ -44,7 +45,7 @@ class AsistenciaServiceTest {
 
         PlatformTransactionManager ptm = mock(PlatformTransactionManager.class);
         when(ptm.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
-        var props = new NexusProperties(null, "token", new NexusProperties.Rag(0.45, 5, 1, 60, true), null);
+        var props = new NexusProperties(null, "token", new NexusProperties.Rag(0.45, 5, 1, 60, true, false), null);
         service = new AsistenciaService(incidentes, consultas, respuestas, articulos, n8n, props,
                 new TransactionTemplate(ptm));
 
@@ -85,7 +86,7 @@ class AsistenciaServiceTest {
     @Test
     void errorReportadoPorElFlujoConservaLaEtapa() {
         when(n8n.consultarRag(any())).thenReturn(
-                new RagResultado("ERROR", null, null, null, null, null, "EMBEDDINGS", "401 Unauthorized"));
+                new RagResultado("ERROR", null, null, null, null, null, "EMBEDDINGS", "401 Unauthorized", null));
         ConsultaDto r = service.consultar(1L, null, false);
         assertThat(r.estado()).isEqualTo(EstadoConsulta.ERROR);
         assertThat(r.detalleError()).startsWith("[EMBEDDINGS]");
@@ -96,7 +97,7 @@ class AsistenciaServiceTest {
         ArticuloConocimiento a2 = articulo(2L, true, true);
         when(articulos.findFuentesValidas(anyCollection())).thenReturn(List.of(a2));
         when(n8n.consultarRag(any())).thenReturn(new RagResultado("RESPONDIDA", "Renovar IP", List.of("paso 1", "paso 2"),
-                List.of(new FuenteRag(2L, "DHCP", "Conectividad", 0.71234, true)), 0.71234, "modelo", null, null));
+                List.of(new FuenteRag(2L, "DHCP", "Conectividad", 0.71234, true)), 0.71234, "modelo", null, null, null));
 
         ConsultaDto r = service.consultar(1L, null, false);
 
@@ -111,7 +112,7 @@ class AsistenciaServiceTest {
         // n8n devolvió el artículo 2, pero en la base relacional ya no es una fuente válida
         when(articulos.findFuentesValidas(anyCollection())).thenReturn(List.of());
         when(n8n.consultarRag(any())).thenReturn(new RagResultado("RESPONDIDA", "Texto", List.of(),
-                List.of(new FuenteRag(2L, "DHCP", "Conectividad", 0.8, true)), 0.8, "modelo", null, null));
+                List.of(new FuenteRag(2L, "DHCP", "Conectividad", 0.8, true)), 0.8, "modelo", null, null, null));
 
         ConsultaDto r = service.consultar(1L, null, false);
 
@@ -121,13 +122,100 @@ class AsistenciaServiceTest {
 
     @Test
     void simulacionDeFallosDeshabilitadaSeRechaza() {
-        var props = new NexusProperties(null, "t", new NexusProperties.Rag(0.45, 5, 1, 60, false), null);
+        var props = new NexusProperties(null, "t", new NexusProperties.Rag(0.45, 5, 1, 60, false, false), null);
         var s = new AsistenciaService(incidentes, consultas, respuestas, articulos, n8n, props, mock(TransactionTemplate.class));
         assertThatThrownBy(() -> s.consultar(1L, null, true)).isInstanceOf(ReglaNegocioException.class);
     }
 
     private static RagResultado sinResultados() {
-        return new RagResultado("SIN_RESULTADOS", "Sin información", List.of(), List.of(), 0.2, null, null, null);
+        return new RagResultado("SIN_RESULTADOS", "Sin información", List.of(), List.of(), 0.2, null, null, null, null);
+    }
+
+    // ---------- Fuentes citadas y candidatas no citadas ----------
+
+    @Test
+    void lasCandidatasNoCitadasSeGuardanComoNoUsadas() {
+        when(articulos.findFuentesValidas(anyCollection()))
+                .thenReturn(List.of(articulo(2L, true, true), articulo(3L, true, true)));
+        when(n8n.consultarRag(any())).thenReturn(respondida(List.of(fuente(2L, 0.71)),
+                List.of(candidata(2L, 0.71, true), candidata(3L, 0.55, false))));
+
+        ConsultaDto r = service.consultar(1L, null, false);
+
+        assertThat(r.estado()).isEqualTo(EstadoConsulta.RESPONDIDA);
+        assertThat(r.respuesta().fuentes())
+                .extracting(FuenteDto::articuloId, FuenteDto::usada)
+                .containsExactlyInAnyOrder(tuple(2L, true), tuple(3L, false));
+        assertThat(consultaGuardada.getRespuesta().getFuentesUsadas())
+                .extracting(f -> f.getArticulo().getId()).containsExactly(2L);
+        verify(articulos).findFuentesValidas(argThat(ids -> ids.containsAll(List.of(2L, 3L)) && ids.size() == 2));
+    }
+
+    @Test
+    void unaCandidataInactivaONoVerificadaSeDescarta() {
+        // El artículo 3 dejó de ser fuente válida: la consulta a la base relacional no lo devuelve
+        when(articulos.findFuentesValidas(anyCollection())).thenReturn(List.of(articulo(2L, true, true)));
+        when(n8n.consultarRag(any())).thenReturn(respondida(List.of(fuente(2L, 0.71)),
+                List.of(candidata(2L, 0.71, true), candidata(3L, 0.55, false))));
+
+        ConsultaDto r = service.consultar(1L, null, false);
+
+        assertThat(r.respuesta().fuentes()).extracting(FuenteDto::articuloId).containsExactly(2L);
+    }
+
+    @Test
+    void unaCandidataValidaNoBastaParaResponderSinFuenteCitadaValida() {
+        // Solo la candidata no citada sigue vigente: no hay evidencia, así que no es RESPONDIDA
+        when(articulos.findFuentesValidas(anyCollection())).thenReturn(List.of(articulo(3L, true, true)));
+        when(n8n.consultarRag(any())).thenReturn(respondida(List.of(fuente(2L, 0.71)),
+                List.of(candidata(2L, 0.71, true), candidata(3L, 0.55, false))));
+
+        ConsultaDto r = service.consultar(1L, null, false);
+
+        assertThat(r.estado()).isEqualTo(EstadoConsulta.SIN_RESULTADOS);
+        assertThat(r.respuesta().fuentes()).isEmpty();
+    }
+
+    @Test
+    void candidatasRepetidasCitadasOFueraDeRangoNoDuplicanNiInventanFuentes() {
+        when(articulos.findFuentesValidas(anyCollection())).thenReturn(List.of(articulo(2L, true, true),
+                articulo(3L, true, true), articulo(4L, true, true), articulo(5L, true, true)));
+        when(n8n.consultarRag(any())).thenReturn(respondida(List.of(fuente(2L, 0.71)), List.of(
+                candidata(2L, 0.71, false),  // ya citada en fuentes: no se repite como candidata
+                candidata(3L, 0.55, false),
+                candidata(3L, 0.54, false),  // repetida
+                candidata(4L, 1.5, false),   // similitud fuera de [0, 1]
+                candidata(5L, null, false)))); // sin similitud
+
+        ConsultaDto r = service.consultar(1L, null, false);
+
+        assertThat(r.respuesta().fuentes())
+                .extracting(FuenteDto::articuloId, FuenteDto::usada)
+                .containsExactlyInAnyOrder(tuple(2L, true), tuple(3L, false));
+    }
+
+    @Test
+    void sinAuditoriaSeGuardanSoloLasFuentesCitadas() {
+        when(articulos.findFuentesValidas(anyCollection())).thenReturn(List.of(articulo(2L, true, true)));
+        when(n8n.consultarRag(any())).thenReturn(new RagResultado("RESPONDIDA", "Renovar IP", List.of(),
+                List.of(fuente(2L, 0.71)), 0.71, "modelo", null, null, null));
+
+        ConsultaDto r = service.consultar(1L, null, false);
+
+        assertThat(r.respuesta().fuentes()).singleElement().satisfies(f -> assertThat(f.usada()).isTrue());
+    }
+
+    private static FuenteRag fuente(Long id, double similitud) {
+        return new FuenteRag(id, "Artículo " + id, "Conectividad", similitud, true);
+    }
+
+    private static CandidataRag candidata(Long id, Double similitud, boolean citada) {
+        return new CandidataRag(id, similitud, citada);
+    }
+
+    private static RagResultado respondida(List<FuenteRag> fuentes, List<CandidataRag> candidatas) {
+        return new RagResultado("RESPONDIDA", "Renovar IP", List.of("paso 1"), fuentes, 0.71, "modelo", null, null,
+                new AuditoriaRag(candidatas));
     }
 
     private static Incidente incidente(String descripcion) {

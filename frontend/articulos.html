@@ -14,7 +14,8 @@
       <p class="sub">Solo los artículos <strong>activos y verificados</strong> se usan como fuentes del asistente.</p>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap" data-roles="ADMIN">
-      <button class="btn" id="btn-reindexar" type="button" title="Ejecuta la indexación del workflow nexus-support de n8n">Sincronizar embeddings</button>
+      <button class="btn" id="btn-reindexar" type="button" title="Ejecuta el Flujo 1 de n8n (indexación de artículos activos y verificados en Qdrant)">Sincronizar embeddings</button>
+      <a class="btn" href="importaciones.html">Importar archivo</a>
       <button class="btn primary" id="btn-nuevo" type="button">+ Nuevo artículo</button>
     </div>
   </div>
@@ -50,6 +51,10 @@
     <div id="k-sin-fuentes"></div>
     <h4>Cobertura por categoría</h4>
     <div id="k-cobertura"></div>
+    <h4>¿Las soluciones sugeridas resolvieron el incidente?</h4>
+    <p class="muted">Respuestas con fuentes según lo indicado al calificarlas. Una reapertura posterior a la asistencia
+      coincide en el tiempo con ella, pero no demuestra que la sugerencia fallara.</p>
+    <div id="k-efectividad"></div>
 
     <h3>Recomendaciones <span class="muted">(reglas automáticas sobre los datos anteriores, no verificadas por una persona)</span></h3>
     <div id="k-recomendaciones"></div>
@@ -123,6 +128,14 @@ async function calidad() {
     ['Sin fuentes', (c) => num(c.sinResultados), 1], ['Mal calificadas (≤ 2)', (c) => num(c.malCalificadas), 1],
     ['Calificación', (c) => c.calificacionPromedio != null ? num(c.calificacionPromedio, 2) : '—', 1],
   ], k.cobertura, 'Sin categorías.');
+  const ef = k.efectividad;
+  $('#k-efectividad').innerHTML = tablaSimple([
+    ['Indicador', (x) => x[0]], ['Valor', (x) => num(x[1]), 1],
+  ], [
+    ['Respuestas con fuentes', ef.respuestasConFuentes], ['Resolvió', ef.resolvio], ['No resolvió', ef.noResolvio],
+    ['Sin indicar', ef.sinIndicar], ['Incidentes con asistencia', ef.incidentesAsistidos],
+    ['Reabiertos después de la asistencia', ef.reabiertosTrasAsistencia],
+  ], 'Sin datos.');
   $('#k-recomendaciones').innerHTML = k.recomendaciones.length
     ? `<ul>${k.recomendaciones.map((r) => `<li><strong>${esc(r.mensaje)}</strong> <span class="muted">— ${esc(r.evidencia)} · regla ${esc(r.regla)}</span></li>`).join('')}</ul>`
     : '<p class="muted">Ninguna regla detectó vacíos de conocimiento.</p>';
@@ -138,7 +151,7 @@ async function cargar() {
     tbody.innerHTML = articulos.length ? articulos.map((a) => `
       <tr id="art-${a.id}">
         <td class="num">${a.id}</td>
-        <td><strong>${esc(a.titulo)}</strong><div class="muted clip">${esc(a.problema)}</div></td>
+        <td><strong>${esc(a.titulo)}</strong>${a.importacionId ? ` <a class="badge info" href="importaciones.html?id=${a.importacionId}" title="Creado desde un archivo; revíselo antes de activarlo y verificarlo">Importado #${a.importacionId}</a>` : ''}<div class="muted clip">${esc(a.problema)}</div></td>
         <td>${esc(a.categoria?.nombre ?? 'General')}</td>
         <td><label><input type="checkbox" data-accion="activo" data-id="${a.id}" ${a.activo ? 'checked' : ''} ${admin ? '' : 'disabled'} style="width:auto"> ${a.activo ? 'Sí' : 'No'}</label></td>
         <td><label><input type="checkbox" data-accion="verificado" data-id="${a.id}" ${a.verificado ? 'checked' : ''} ${admin ? '' : 'disabled'} style="width:auto"> ${a.verificado ? 'Sí' : 'No'}</label></td>
@@ -203,19 +216,77 @@ $('#form').addEventListener('submit', async (e) => {
 });
 $('#filtros').addEventListener('submit', (e) => { e.preventDefault(); cargar(); });
 
-$('#btn-reindexar').addEventListener('click', async (e) => {
-  const btn = e.currentTarget;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Sincronizando…';
+// La indexación corre en segundo plano en el backend: se solicita y se consulta su estado cada 3 s.
+const ESPERA_SONDEO_MS = 3000;
+let sondeo = null;
+
+function botonIndexando(activo) {
+  const btn = $('#btn-reindexar');
+  btn.disabled = activo;
+  btn.innerHTML = activo ? '<span class="spinner"></span> Sincronizando…' : 'Sincronizar embeddings';
+}
+
+// Tipo de error del flujo (AUTENTICACION, VALIDACION, SERVICIO_NO_DISPONIBLE, TIMEOUT, INTERNO); el flujo anterior no lo envía
+const tipo = (r) => (r.tipoError ? ` (${r.tipoError})` : '');
+
+function avisarResultado(e) {
+  if (e.estado === 'SIN_CONEXION') {
+    toast(`No se pudo contactar con n8n: ${e.mensaje ?? 'sin detalle'}`, 'err');
+    return;
+  }
+  if (e.estado !== 'FINALIZADA') {
+    toast(`La sincronización no terminó: ${e.mensaje ?? e.estado}`, 'err');
+    return;
+  }
+  // n8n siempre responde HTTP 200: el resultado real está en "estado" (OK / ERROR) y "etapa".
+  const r = e.resultado ?? {};
+  const conteo = `vectorizados: ${r.vectorizados?.length ?? 0} · eliminados: ${r.eliminados?.length ?? 0} · sin cambios: ${r.sinCambios ?? 0}`;
+  if (r.estado === 'OK') {
+    toast(`Sincronización completa · ${conteo}`);
+  } else if (r.etapa === 'INDEXACION_PARCIAL') {
+    toast(`Sincronización parcial${tipo(r)}: ${r.mensaje ?? 'algunos artículos fallaron'} · no se eliminó ningún vector · fallidos: ${r.fallidos?.length ?? 0} · ${conteo}`, 'err');
+  } else {
+    toast(`La sincronización falló en la etapa ${r.etapa ?? 'desconocida'}${tipo(r)}: ${r.mensaje ?? 'sin detalle'}`, 'err');
+  }
+}
+
+function seguirIndexacion(avisar) {
+  clearTimeout(sondeo);
+  botonIndexando(true);
+  sondeo = setTimeout(async () => {
+    try {
+      const e = await api.estadoIndexacion();
+      if (e.estado === 'EN_CURSO') { seguirIndexacion(avisar); return; }
+      botonIndexando(false);
+      if (avisar) avisarResultado(e);
+    } catch (err) {
+      botonIndexando(false);
+      mostrarError(err);
+    }
+  }, ESPERA_SONDEO_MS);
+}
+
+$('#btn-reindexar').addEventListener('click', async () => {
+  botonIndexando(true);
   try {
-    const r = await api.reindexar(false);
-    toast(`Vectorizados: ${r.vectorizados?.length ?? 0} · eliminados: ${r.eliminados?.length ?? 0} · sin cambios: ${r.sinCambios ?? 0}`);
-  } catch (err) { mostrarError(err); }
-  btn.disabled = false;
-  btn.textContent = 'Sincronizar embeddings';
+    const e = await api.reindexar(false);
+    if (e.pendiente) toast('Ya había una sincronización en curso; se repetirá al terminar para incluir los cambios');
+    seguirIndexacion(true);
+  } catch (err) {
+    botonIndexando(false);
+    mostrarError(err);
+  }
 });
 
-iniciarLayout('articulos.html').then(iniciar);
+// Si al abrir la página ya hay una indexación en marcha (arranque o edición reciente), se muestra.
+async function revisarIndexacionEnCurso() {
+  try {
+    const e = await api.estadoIndexacion();
+    if (e.estado === 'EN_CURSO') seguirIndexacion(false);
+  } catch { /* el estado es informativo: sin él la página funciona igual */ }
+}
+
+iniciarLayout('articulos.html').then(iniciar).then(revisarIndexacionEnCurso);
 </script>
 </body>
 </html>

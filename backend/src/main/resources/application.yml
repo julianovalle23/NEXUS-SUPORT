@@ -11,6 +11,11 @@ spring:
       static-locations: file:../frontend/,classpath:/static/
   application:
     name: nexus-support
+  # Carga de archivos de artículos (TXT, MD, CSV): el servicio vuelve a comprobar el límite de 1 MB
+  servlet:
+    multipart:
+      max-file-size: 1MB
+      max-request-size: 2MB
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/nexus_support}
     username: ${DB_USER:nexus}
@@ -34,7 +39,13 @@ nexus:
     webhook-base-url: ${N8N_WEBHOOK_BASE_URL:http://localhost:5678/webhook}
     rag-path: /nexus/rag
     indexacion-path: /nexus/indexar
+    # Mayor que el executionTimeout del flujo de indexación (1800 s) para no cortar una ejecución válida
+    indexacion-timeout-segundos: ${N8N_INDEXACION_TIMEOUT_SEGUNDOS:1860}
   internal-token: ${INTERNAL_API_TOKEN:}
+  indexacion:
+    # Reintentos ante fallos transitorios informados por n8n (0-5) y espera base, que se duplica en cada intento
+    reintentos: ${INDEXACION_REINTENTOS:2}
+    espera-reintento-segundos: ${INDEXACION_ESPERA_REINTENTO_SEGUNDOS:30}
   # Primera cuenta de administración: se crea solo si no hay ningún administrador con contraseña
   admin-inicial:
     correo: ${NEXUS_ADMIN_CORREO:}
@@ -46,6 +57,13 @@ nexus:
     min-resultados: ${RAG_MIN_RESULTADOS:1}
     timeout-segundos: ${RAG_TIMEOUT_SEGUNDOS:60}
     permitir-simulacion-fallos: ${RAG_PERMITIR_SIMULACION_FALLOS:false}
+    # true solo cuando esté publicado el flujo RAG que admite incidente.elemento, mensajeError y pasosIntentados;
+    # con el flujo anterior, n8n rechaza esos campos (VALIDACION)
+    ingreso-guiado-estructurado: ${RAG_INGRESO_GUIADO_ESTRUCTURADO:false}
+  sla:
+    # Cada cuánto se revisan los plazos para generar avisos y escalamientos (formato ISO-8601)
+    revision-intervalo: ${SLA_REVISION_INTERVALO:PT5M}
+    revision-retraso-inicial: ${SLA_REVISION_RETRASO_INICIAL:PT1M}
   cors:
     origenes: ${CORS_ORIGENES:http://localhost:3000,http://127.0.0.1:3000}
 

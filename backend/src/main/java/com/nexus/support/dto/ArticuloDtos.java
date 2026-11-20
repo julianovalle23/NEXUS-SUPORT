@@ -35,12 +35,12 @@ public final class ArticuloDtos {
     public record ArticuloResponse(Long id, String titulo, String problema, String sintomas, String causa,
                                    String solucion, Ref categoria, boolean activo, boolean verificado,
                                    boolean fuenteValida, LocalDateTime fechaCreacion,
-                                   LocalDateTime fechaActualizacion) {
+                                   LocalDateTime fechaActualizacion, Long importacionId) {
 
         public static ArticuloResponse de(ArticuloConocimiento a) {
             return new ArticuloResponse(a.getId(), a.getTitulo(), a.getProblema(), a.getSintomas(), a.getCausa(),
                     a.getSolucion(), ref(a), a.isActivo(), a.isVerificado(), a.esFuenteValida(),
-                    a.getFechaCreacion(), a.getFechaActualizacion());
+                    a.getFechaCreacion(), a.getFechaActualizacion(), idImportacion(a));
         }
     }
 
@@ -48,9 +48,12 @@ public final class ArticuloDtos {
      * Representación que consume n8n. El texto y su hash se calculan aquí para
      * que exista una sola definición de "qué se vectoriza" y el flujo pueda
      * omitir artículos sin cambios (evita duplicados y re-embeddings innecesarios).
+     * {@code origen} (MANUAL o IMPORTACION) e {@code importacionId} se guardan en el payload de Qdrant para
+     * auditar de dónde viene cada fuente; no forman parte del texto vectorizado ni del hash.
      */
     public record ArticuloIndexable(Long id, String titulo, String categoria, String texto, String hash,
-                                    boolean fuenteValida, LocalDateTime fechaActualizacion) {
+                                    boolean fuenteValida, LocalDateTime fechaActualizacion, String origen,
+                                    Long importacionId) {
 
         public static ArticuloIndexable de(ArticuloConocimiento a) {
             String texto = "Título: " + a.getTitulo()
@@ -61,7 +64,8 @@ public final class ArticuloDtos {
                     + "\nSolución: " + a.getSolucion();
             Ref cat = ref(a);
             return new ArticuloIndexable(a.getId(), a.getTitulo(), cat == null ? null : cat.nombre(), texto,
-                    sha256(texto), a.esFuenteValida(), a.getFechaActualizacion());
+                    sha256(texto), a.esFuenteValida(), a.getFechaActualizacion(),
+                    a.getImportacion() == null ? "MANUAL" : "IMPORTACION", idImportacion(a));
         }
     }
 
@@ -87,6 +91,11 @@ public final class ArticuloDtos {
             return new FuenteContexto(a.getId(), a.getTitulo(), a.getProblema(), a.getSintomas(), a.getCausa(),
                     a.getSolucion());
         }
+    }
+
+    /** Solo el id: en un proxy de Hibernate leerlo no carga la importación. */
+    private static Long idImportacion(ArticuloConocimiento a) {
+        return a.getImportacion() == null ? null : a.getImportacion().getId();
     }
 
     private static Ref ref(ArticuloConocimiento a) {

@@ -43,6 +43,11 @@ public class ArticuloConocimiento {
     @Column(nullable = false)
     private boolean verificado = false;
 
+    /** Importación de archivo que creó el artículo; null si se escribió a mano. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "importacion_id")
+    private ImportacionArticulo importacion;
+
     @PrePersist
     void alCrear() {
         fechaCreacion = fechaActualizacion = LocalDateTime.now();
@@ -77,4 +82,6 @@ public class ArticuloConocimiento {
     public void setActivo(boolean activo) { this.activo = activo; }
     public boolean isVerificado() { return verificado; }
     public void setVerificado(boolean verificado) { this.verificado = verificado; }
+    public ImportacionArticulo getImportacion() { return importacion; }
+    public void setImportacion(ImportacionArticulo importacion) { this.importacion = importacion; }
 }

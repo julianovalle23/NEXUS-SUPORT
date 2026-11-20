@@ -27,5 +27,9 @@ public interface ArticuloRepository extends JpaRepository<ArticuloConocimiento, 
 
     boolean existsByTituloIgnoreCase(String titulo);
 
+    /** Títulos ya usados, en minúsculas, entre los indicados (también en minúsculas). */
+    @Query("SELECT LOWER(a.titulo) FROM ArticuloConocimiento a WHERE LOWER(a.titulo) IN :titulos")
+    List<String> titulosExistentes(@Param("titulos") Collection<String> titulos);
+
     boolean existsByTituloIgnoreCaseAndIdNot(String titulo, Long id);
 }

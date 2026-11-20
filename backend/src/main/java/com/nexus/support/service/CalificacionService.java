@@ -4,6 +4,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.nexus.support.domain.Calificacion;
+import com.nexus.support.domain.EstadoConsulta;
+import com.nexus.support.exception.ReglaNegocioException;
 import com.nexus.support.domain.RespuestaIA;
 import com.nexus.support.dto.AsistenciaDtos.CalificacionDto;
 import com.nexus.support.dto.AsistenciaDtos.CalificacionRequest;
@@ -27,9 +29,14 @@ public class CalificacionService {
     public CalificacionDto calificar(Long respuestaId, CalificacionRequest req) {
         RespuestaIA respuesta = respuestas.findById(respuestaId)
                 .orElseThrow(() -> new RecursoNoEncontradoException("Respuesta", respuestaId));
+        // Sin fuentes no hubo solución sugerida: no tiene sentido declarar si resolvió el incidente.
+        if (req.resolvio() != null && respuesta.getConsulta().getEstado() != EstadoConsulta.RESPONDIDA) {
+            throw new ReglaNegocioException("Solo se puede indicar si resolvió el incidente en respuestas con fuentes");
+        }
         Calificacion c = calificaciones.findByRespuestaId(respuestaId).orElseGet(() -> new Calificacion(respuesta));
         c.setPuntuacion(req.puntuacion().shortValue());
         c.setComentario(req.comentario() == null || req.comentario().isBlank() ? null : req.comentario().trim());
+        c.setResolvio(req.resolvio());
         return CalificacionDto.de(calificaciones.saveAndFlush(c));
     }
 

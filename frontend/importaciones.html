@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Importar artículos · NEXUS Support</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Importar artículos</h1>
+      <p class="sub">Cargue un archivo <strong>.txt</strong>, <strong>.md</strong> o <strong>.csv</strong> (máximo 1 MB y 200 artículos).
+        Revise la vista previa y confirme: los artículos se crean como <strong>borradores inactivos y sin verificar</strong>,
+        y no se usan como fuente del asistente hasta que los active y verifique en la
+        <a href="articulos.html">base de conocimiento</a>.</p>
+    </div>
+  </div>
+
+  <section class="card">
+    <form id="form-carga" class="filters">
+      <div class="field"><label for="i-archivo">Archivo *</label>
+        <input id="i-archivo" name="archivo" type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv" required></div>
+      <div class="field"><label for="i-categoria">Categoría por defecto</label><select id="i-categoria" name="categoriaId"></select></div>
+      <button class="btn primary" type="submit" id="btn-cargar">Cargar y previsualizar</button>
+    </form>
+    <details>
+      <summary class="muted">Formato de los archivos</summary>
+      <div class="muted" style="margin-top:8px">
+        <p><strong>CSV</strong>: primera fila con las columnas <code>titulo, problema, sintomas, causa, solucion</code> y,
+          opcionalmente, <code>categoria</code>. Separador coma, punto y coma o tabulador; use comillas dobles para textos con
+          separadores o saltos de línea (<code>""</code> dentro de comillas es una comilla).</p>
+        <p><strong>Markdown</strong>: cada artículo empieza con <code># Título</code> y sus campos son
+          <code>## Problema</code>, <code>## Síntomas</code>, <code>## Causa</code>, <code>## Solución</code> y, opcional,
+          <code>## Categoría</code>.</p>
+        <p><strong>Texto</strong>: artículos separados por una línea <code>---</code>. Cada campo empieza con
+          <code>Título:</code>, <code>Problema:</code>, <code>Síntomas:</code>, <code>Causa:</code>, <code>Solución:</code> o
+          <code>Categoría:</code> y puede continuar en las líneas siguientes.</p>
+        <p>La categoría debe existir. Si un registro no la indica, se usa la categoría por defecto. Los títulos que ya existen en la
+          base de conocimiento o se repiten en el archivo se marcan como duplicados y no se importan.
+          No se puede volver a cargar un archivo idéntico mientras su importación esté vigente.</p>
+      </div>
+    </details>
+  </section>
+
+  <section class="card" id="detalle" hidden style="margin-top:16px">
+    <div class="chart-head"><h2 id="d-titulo"></h2><span id="d-estado"></span></div>
+    <p class="muted" id="d-meta"></p>
+    <p class="errors" id="d-error"></p>
+    <div id="d-conteo" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th><input type="checkbox" id="sel-todas" style="width:auto" title="Seleccionar todos los válidos"></th>
+          <th>Línea</th><th>Título</th><th>Categoría</th><th>Estado</th><th>Detalle</th></tr></thead>
+        <tbody id="d-filas"></tbody>
+      </table>
+    </div>
+    <div class="actions" id="d-acciones" style="margin-top:12px">
+      <button class="btn" type="button" id="btn-descartar">Descartar importación</button>
+      <button class="btn primary" type="button" id="btn-confirmar">Crear borradores seleccionados</button>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:16px">
+    <div class="chart-head"><h2>Importaciones recientes</h2><span class="muted">Últimas 100</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Archivo</th><th>Estado</th><th class="num">Registros</th><th class="num">Válidos</th>
+          <th class="num">Importados</th><th>Cargado por</th><th>Fecha</th><th></th></tr></thead>
+        <tbody id="tabla"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script src="js/api.js"></script>
+<script src="js/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const ESTADO_IMPORTACION = {
+  RECIBIDO: ['Recibido', 'info'], PROCESANDO: ['Procesando', 'info'], PENDIENTE_REVISION: ['Pendiente de revisión', 'warn'],
+  IMPORTADO: ['Importado', 'ok'], ERROR: ['Error', 'err'], DESCARTADO: ['Descartado', ''],
+};
+const ESTADO_FILA = {
+  VALIDA: ['Válido', 'ok'], INVALIDA: ['Inválido', 'err'], DUPLICADA: ['Duplicado', 'warn'],
+  IMPORTADA: ['Importado', 'ok'], DESCARTADA: ['Descartado', ''],
+};
+let actual = null;
+
+const badge = (mapa, estado) => {
+  const [txt, cls] = mapa[estado] ?? [estado, ''];
+  return `<span class="badge ${cls}">${esc(txt)}</span>`;
+};
+
+async function iniciar() {
+  try {
+    const c = await api.catalogos();
+    llenarSelect($('#i-categoria'), c.categorias, { vacio: 'General (sin categoría)' });
+  } catch (e) { mostrarError(e); }
+  await listar();
+  const id = new URLSearchParams(location.search).get('id');
+  if (id) abrir(Number(id));
+}
+
+async function listar() {
+  try {
+    const lista = await api.importaciones();
+    $('#tabla').innerHTML = lista.length ? lista.map((i) => `
+      <tr>
+        <td class="num">${i.id}</td>
+        <td>${esc(i.nombreArchivo)} <span class="muted">${esc(i.formato)}</span></td>
+        <td>${badge(ESTADO_IMPORTACION, i.estado)}</td>
+        <td class="num">${num(i.totalRegistros)}</td>
+        <td class="num">${num(i.registros.VALIDA + i.registros.IMPORTADA + i.registros.DESCARTADA)}</td>
+        <td class="num">${num(i.registros.IMPORTADA)}</td>
+        <td>${esc(i.cargadoPor)}</td>
+        <td class="muted">${fecha(i.fechaCarga)}</td>
+        <td><button class="btn small" type="button" data-abrir="${i.id}">Ver</button></td>
+      </tr>`).join('') : '<tr><td colspan="9" class="empty">Todavía no se ha cargado ningún archivo.</td></tr>';
+  } catch (e) { mostrarError(e); }
+}
+
+function mostrar(d) {
+  actual = d;
+  const r = d.resumen;
+  const revisable = r.estado === 'PENDIENTE_REVISION';
+  $('#detalle').hidden = false;
+  $('#d-titulo').textContent = `Importación #${r.id} · ${r.nombreArchivo}`;
+  $('#d-estado').innerHTML = badge(ESTADO_IMPORTACION, r.estado);
+  $('#d-meta').textContent = [
+    `${r.formato} · ${num(r.tamanoBytes / 1024, 1)} KB`,
+    `cargado por ${r.cargadoPor} el ${fecha(r.fechaCarga)}`,
+    r.categoria ? `categoría por defecto: ${r.categoria.nombre}` : null,
+    r.revisadoPor ? `revisado por ${r.revisadoPor} el ${fecha(r.fechaRevision)}` : null,
+  ].filter(Boolean).join(' · ');
+  $('#d-error').textContent = r.detalleError ?? '';
+  $('#d-conteo').innerHTML = Object.entries(r.registros).filter(([, n]) => n > 0)
+    .map(([e, n]) => `${badge(ESTADO_FILA, e)} <span class="muted">${num(n)}</span>`).join(' ');
+  $('#d-filas').innerHTML = d.filas.length ? d.filas.map((f) => `
+    <tr>
+      <td>${f.estado === 'VALIDA' && revisable ? `<input type="checkbox" class="sel" value="${f.id}" checked style="width:auto">` : ''}</td>
+      <td class="num">${f.numero}</td>
+      <td>${f.titulo ? `<strong>${esc(f.titulo)}</strong>` : '<span class="muted">(sin título)</span>'}
+        ${f.articuloId ? ` <a href="articulos.html#art-${f.articuloId}">artículo #${f.articuloId}</a>` : ''}
+        ${f.problema ? `<details><summary class="muted">Ver contenido</summary>
+          <p><strong>Problema:</strong> ${esc(f.problema)}</p><p><strong>Síntomas:</strong> ${esc(f.sintomas ?? '')}</p>
+          <p><strong>Causa:</strong> ${esc(f.causa ?? '')}</p><p><strong>Solución:</strong> ${esc(f.solucion ?? '')}</p></details>` : ''}</td>
+      <td>${esc(f.categoria?.nombre ?? 'General')}</td>
+      <td>${badge(ESTADO_FILA, f.estado)}</td>
+      <td class="errors">${f.errores.map(esc).join('<br>')}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="empty">No se leyó ningún registro.</td></tr>';
+  $('#sel-todas').checked = true;
+  $('#sel-todas').disabled = !revisable;
+  $('#d-acciones').hidden = !revisable;
+  actualizarBoton();
+}
+
+function seleccion() {
+  return [...document.querySelectorAll('#d-filas .sel:checked')].map((c) => Number(c.value));
+}
+
+function actualizarBoton() {
+  const n = seleccion().length;
+  $('#btn-confirmar').disabled = n === 0;
+  $('#btn-confirmar').textContent = `Crear ${n} borrador${n === 1 ? '' : 'es'}`;
+}
+
+async function abrir(id) {
+  try {
+    mostrar(await api.importacion(id));
+    $('#detalle').scrollIntoView({ block: 'start' });
+  } catch (e) { mostrarError(e); }
+}
+
+$('#form-carga').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const archivo = $('#i-archivo').files[0];
+  if (!archivo) return;
+  if (archivo.size > 1024 * 1024) { toast('El archivo supera 1 MB', 'err'); return; }
+  const btn = $('#btn-cargar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Procesando…';
+  try {
+    const d = await api.cargarImportacion(archivo, $('#i-categoria').value);
+    mostrar(d);
+    toast(d.resumen.estado === 'PENDIENTE_REVISION'
+      ? `${num(d.resumen.registros.VALIDA)} de ${num(d.resumen.totalRegistros)} registros válidos; revise y confirme`
+      : 'El archivo no tiene registros válidos', d.resumen.estado === 'PENDIENTE_REVISION' ? undefined : 'err');
+    $('#form-carga').reset();
+    listar();
+  } catch (err) { mostrarError(err); }
+  btn.disabled = false;
+  btn.textContent = 'Cargar y previsualizar';
+});
+
+$('#d-filas').addEventListener('change', (e) => { if (e.target.matches('.sel')) actualizarBoton(); });
+$('#sel-todas').addEventListener('change', (e) => {
+  document.querySelectorAll('#d-filas .sel').forEach((c) => { c.checked = e.target.checked; });
+  actualizarBoton();
+});
+$('#tabla').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-abrir]');
+  if (b) abrir(Number(b.dataset.abrir));
+});
+
+$('#btn-confirmar').addEventListener('click', async () => {
+  const filas = seleccion();
+  if (!filas.length || !confirm(`Se crearán ${filas.length} artículo(s) inactivos y sin verificar. ¿Continuar?`)) return;
+  try {
+    const d = await api.confirmarImportacion(actual.resumen.id, filas);
+    mostrar(d);
+    toast(`${num(d.resumen.registros.IMPORTADA)} borrador(es) creados; actívelos y verifíquelos en la base de conocimiento tras revisarlos`);
+    listar();
+  } catch (e) { mostrarError(e); }
+});
+
+$('#btn-descartar').addEventListener('click', async () => {
+  if (!confirm('Se descartará la importación sin crear artículos. ¿Continuar?')) return;
+  try {
+    mostrar(await api.descartarImportacion(actual.resumen.id));
+    toast('Importación descartada');
+    listar();
+  } catch (e) { mostrarError(e); }
+});
+
+iniciarLayout('importaciones.html').then(iniciar);
+</script>
+</body>
+</html>

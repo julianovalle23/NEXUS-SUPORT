@@ -30,7 +30,9 @@ function irALogin() {
 
 async function request(method, path, body) {
   const opts = { method, headers: {}, credentials: 'same-origin' };
-  if (body !== undefined) {
+  if (body instanceof FormData) {
+    opts.body = body; // multipart: el navegador fija Content-Type con su boundary
+  } else if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
@@ -70,6 +72,7 @@ const api = {
   cambiarClave: (actual, nueva) => request('PUT', '/auth/clave', { actual, nueva }),
 
   usuarios: () => request('GET', '/usuarios'),
+  auditoriaUsuarios: () => request('GET', '/usuarios/auditoria'),
   crearUsuario: (datos) => request('POST', '/usuarios', datos),
   actualizarUsuario: (id, datos) => request('PUT', `/usuarios/${id}`, datos),
   asignarClave: (id, clave) => request('PUT', `/usuarios/${id}/clave`, { clave }),
@@ -78,22 +81,49 @@ const api = {
 
   incidentes: (filtros) => request('GET', '/incidentes' + qs(filtros)),
   incidente: (id) => request('GET', `/incidentes/${id}`),
+  primeraRespuesta: (id) => request('GET', `/incidentes/${id}/primera-respuesta`),
+  revision: (id) => request('GET', `/incidentes/${id}/revision`),
+  guardarRevision: (id, datos) => request('PUT', `/incidentes/${id}/revision`, datos),
+  revisionesPendientes: () => request('GET', '/revisiones/pendientes'),
   crearIncidente: (datos) => request('POST', '/incidentes', datos),
   actualizarIncidente: (id, datos) => request('PUT', `/incidentes/${id}`, datos),
   cambiarEstadoIncidente: (id, estadoId) => request('PATCH', `/incidentes/${id}/estado`, { estadoId }),
+  reabrirIncidente: (id, estadoId, motivo) => request('POST', `/incidentes/${id}/reapertura`, { estadoId, motivo }),
+  registrarSeguimiento: (id, datos) => request('POST', `/incidentes/${id}/seguimiento`, datos),
 
   solicitarAsistencia: (id, pregunta) =>
     request('POST', `/incidentes/${id}/asistencia`, pregunta === undefined ? {} : { pregunta }),
   historialIncidente: (id) => request('GET', `/incidentes/${id}/consultas`),
   consultas: (filtros) => request('GET', '/consultas' + qs(filtros)),
-  calificar: (respuestaId, puntuacion, comentario) =>
-    request('PUT', `/respuestas/${respuestaId}/calificacion`, { puntuacion, comentario }),
+  calificar: (respuestaId, puntuacion, comentario, resolvio = null) =>
+    request('PUT', `/respuestas/${respuestaId}/calificacion`, { puntuacion, comentario, resolvio }),
 
   articulos: (filtros) => request('GET', '/articulos' + qs(filtros || {})),
   crearArticulo: (datos) => request('POST', '/articulos', datos),
   actualizarArticulo: (id, datos) => request('PUT', `/articulos/${id}`, datos),
   estadoArticulo: (id, activo, verificado) => request('PATCH', `/articulos/${id}/estado`, { activo, verificado }),
   reindexar: (forzar) => request('POST', '/articulos/reindexar' + qs({ forzar })),
+  estadoIndexacion: () => request('GET', '/articulos/indexacion'),
+  importaciones: () => request('GET', '/importaciones'),
+  importacion: (id) => request('GET', `/importaciones/${id}`),
+  cargarImportacion: (archivo, categoriaId) => {
+    const datos = new FormData();
+    datos.append('archivo', archivo);
+    return request('POST', '/importaciones' + qs({ categoriaId }), datos);
+  },
+  confirmarImportacion: (id, filas) => request('POST', `/importaciones/${id}/confirmar`, { filas }),
+  descartarImportacion: (id) => request('POST', `/importaciones/${id}/descartar`),
+  alertasSla: (estado) => request('GET', '/alertas-sla' + qs({ estado })),
+  atenderAlerta: (id, nota) => request('POST', `/alertas-sla/${id}/atender`, { nota }),
+  revisarAlertas: () => request('POST', '/alertas-sla/revisar'),
+
+  problemas: (filtros) => request('GET', '/problemas' + qs(filtros || {})),
+  problema: (id) => request('GET', `/problemas/${id}`),
+  crearProblema: (datos) => request('POST', '/problemas', datos),
+  actualizarProblema: (id, datos) => request('PUT', `/problemas/${id}`, datos),
+  estadoProblema: (id, estado) => request('PATCH', `/problemas/${id}/estado`, { estado }),
+  vincularIncidente: (id, incidenteId) => request('PUT', `/problemas/${id}/incidentes/${incidenteId}`),
+  desvincularIncidente: (id, incidenteId) => request('DELETE', `/problemas/${id}/incidentes/${incidenteId}`),
 
   dashboard: (filtros) => request('GET', '/analitica/dashboard' + qs(filtros)),
   sla: (filtros) => request('GET', '/analitica/sla' + qs(filtros || {})),

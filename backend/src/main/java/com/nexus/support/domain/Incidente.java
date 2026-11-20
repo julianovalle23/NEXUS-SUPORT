@@ -2,9 +2,16 @@ package com.nexus.support.domain;
 
 import java.time.LocalDateTime;
 
+import org.hibernate.annotations.DynamicUpdate;
+
 import jakarta.persistence.*;
 
+/**
+ * Con @DynamicUpdate el UPDATE solo incluye las columnas modificadas, así una operación que solo
+ * vincula un problema no puede reescribir el estado que otra transacción acaba de cambiar.
+ */
 @Entity
+@DynamicUpdate
 @Table(name = "incidente")
 public class Incidente {
 
@@ -42,6 +49,29 @@ public class Incidente {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "solicitante_id")
     private Usuario cuentaSolicitante;
+
+    /** Equipo, aplicación o servicio afectado (opcional). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "elemento_id")
+    private ElementoTi elemento;
+
+    /** Ingreso guiado (opcional): mensaje de error exacto que ve el usuario. */
+    @Column(name = "mensaje_error", length = 1000)
+    private String mensajeError;
+
+    /** Ingreso guiado (opcional): lo que ya se intentó para resolverlo. */
+    @Column(name = "pasos_intentados", length = 2000)
+    private String pasosIntentados;
+
+    /** Problema al que pertenece (opcional); se gestiona desde ProblemaService. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "problema_id")
+    private Problema problema;
+
+    /** Incidente cerrado del que este es seguimiento; el original no se modifica. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "seguimiento_de_id", updatable = false)
+    private Incidente seguimientoDe;
 
     @Column(name = "fecha_creacion", nullable = false)
     private LocalDateTime fechaCreacion;
@@ -96,6 +126,16 @@ public class Incidente {
     public void setSolicitante(String solicitante) { this.solicitante = solicitante; }
     public Usuario getCuentaSolicitante() { return cuentaSolicitante; }
     public void setCuentaSolicitante(Usuario cuentaSolicitante) { this.cuentaSolicitante = cuentaSolicitante; }
+    public ElementoTi getElemento() { return elemento; }
+    public void setElemento(ElementoTi elemento) { this.elemento = elemento; }
+    public String getMensajeError() { return mensajeError; }
+    public void setMensajeError(String mensajeError) { this.mensajeError = mensajeError; }
+    public String getPasosIntentados() { return pasosIntentados; }
+    public void setPasosIntentados(String pasosIntentados) { this.pasosIntentados = pasosIntentados; }
+    public Problema getProblema() { return problema; }
+    public void setProblema(Problema problema) { this.problema = problema; }
+    public Incidente getSeguimientoDe() { return seguimientoDe; }
+    public void setSeguimientoDe(Incidente seguimientoDe) { this.seguimientoDe = seguimientoDe; }
     public LocalDateTime getFechaCreacion() { return fechaCreacion; }
     public LocalDateTime getFechaActualizacion() { return fechaActualizacion; }
     public LocalDateTime getFechaResolucion() { return fechaResolucion; }

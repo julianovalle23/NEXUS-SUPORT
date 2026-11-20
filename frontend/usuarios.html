@@ -27,7 +27,19 @@
       </table>
     </div>
     <p class="muted">Una cuenta sin contraseña no puede iniciar sesión. Solo las cuentas con perfil Técnico reciben incidentes.
-      Cambiar el perfil, el correo, el estado o la contraseña de una cuenta cierra sus sesiones abiertas.</p>
+      Cambiar el perfil, el correo, el estado o la contraseña de una cuenta cierra sus sesiones abiertas.
+      Nadie puede cambiar su propio perfil ni su estado, y siempre debe quedar al menos una cuenta de administración
+      activa con contraseña.</p>
+  </section>
+
+  <section class="card">
+    <div class="chart-head"><h2>Cambios de perfil y estado</h2><span class="muted">Últimos 200 · registro de solo inserción</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Fecha</th><th>Realizado por</th><th>Cuenta afectada</th><th>Perfil</th><th>Estado</th></tr></thead>
+        <tbody id="auditoria"></tbody>
+      </table>
+    </div>
   </section>
 </main>
 
@@ -47,6 +59,7 @@
       <select id="u-activo" name="activo"><option value="true">Activa</option><option value="false">Inactiva</option></select></div>
     <div class="field" id="campo-clave"><label for="u-clave">Contraseña inicial (opcional, 8 a 72 caracteres)</label>
       <input id="u-clave" name="clave" type="password" autocomplete="new-password" minlength="8" maxlength="72"></div>
+    <p class="muted" id="aviso-propia" hidden>Es su propia cuenta: el perfil, el correo y el estado solo puede cambiarlos otro administrador.</p>
     <div class="errors" id="errores"></div>
     <div class="actions">
       <button class="btn" type="button" id="cancelar">Cancelar</button>
@@ -99,6 +112,28 @@ async function cargar() {
     tbody.innerHTML = '<tr><td colspan="7" class="empty">No se pudieron cargar las cuentas.</td></tr>';
     mostrarError(e);
   }
+  cargarAuditoria();
+}
+
+const ESTADO_CUENTA = (v) => v == null ? '—' : (v ? 'Activa' : 'Inactiva');
+const cambio = (antes, despues) => antes == null ? `${esc(despues)} <span class="muted">(alta)</span>`
+  : antes === despues ? esc(despues) : `${esc(antes)} → <strong>${esc(despues)}</strong>`;
+
+async function cargarAuditoria() {
+  const tbody = $('#auditoria');
+  try {
+    const filas = await api.auditoriaUsuarios();
+    tbody.innerHTML = filas.length ? filas.map((a) => `
+      <tr>
+        <td>${fecha(a.fecha)}</td>
+        <td>${a.actor ? esc(a.actor) : '<span class="muted">Arranque del sistema</span>'}</td>
+        <td>${esc(a.usuario)}</td>
+        <td>${cambio(a.rolAnterior && NOMBRE_ROL[a.rolAnterior], NOMBRE_ROL[a.rolNuevo])}</td>
+        <td>${cambio(a.activoAnterior == null ? null : ESTADO_CUENTA(a.activoAnterior), ESTADO_CUENTA(a.activoNuevo))}</td>
+      </tr>`).join('') : '<tr><td colspan="5" class="empty">Aún no hay cambios registrados.</td></tr>';
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No se pudo cargar el registro de cambios.</td></tr>';
+  }
 }
 
 function abrir(u) {
@@ -115,6 +150,10 @@ function abrir(u) {
     f.rol.value = u.rol;
     f.activo.value = String(u.activo);
   }
+  // El servidor lo rechaza igualmente; aquí solo se evita ofrecer un cambio que no se aplicará.
+  const propia = !!u && u.id === SESION.id;
+  [f.rol, f.activo, f.correo].forEach((c) => c.disabled = propia);
+  $('#aviso-propia').hidden = !propia;
   $('#errores').textContent = '';
   $('#dlg').showModal();
 }
@@ -122,6 +161,10 @@ function abrir(u) {
 $('#form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const d = Object.fromEntries(new FormData(e.target));
+  if (editando && editando.id === SESION.id) {
+    // Los campos deshabilitados no viajan en el formulario: se envían los valores actuales
+    Object.assign(d, { rol: editando.rol, correo: editando.correo, activo: String(editando.activo) });
+  }
   d.activo = editando ? d.activo === 'true' : true;
   if (editando || !d.clave) delete d.clave;
   try {

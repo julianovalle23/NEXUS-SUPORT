@@ -132,3 +132,73 @@ LEFT JOIN respuesta_ia r ON r.consulta_id = c.id
 LEFT JOIN calificacion k ON k.respuesta_id = r.id
 GROUP BY c.estado
 ORDER BY c.estado;
+
+-- ---------------------------------------------------------------------------
+-- 9. Efectividad de las respuestas con fuentes (sin filtros)
+--    resolvio: lo declarado al calificar (NULL = no indicado).
+--    Reapertura: fila ACTUALIZACION o REAPERTURA con estado no final cuya fila anterior del historial era final,
+--    posterior a la primera consulta RESPONDIDA del incidente. Es coincidencia temporal, no causa.
+-- ---------------------------------------------------------------------------
+WITH resp AS (
+    SELECT c.incidente_id, c.fecha, k.resolvio
+    FROM consulta_ia c
+    JOIN respuesta_ia r      ON r.consulta_id = c.id
+    LEFT JOIN calificacion k ON k.respuesta_id = r.id
+    WHERE c.estado = 'RESPONDIDA'
+), asistidos AS (
+    SELECT incidente_id, MIN(fecha) AS primera FROM resp GROUP BY incidente_id
+), transiciones AS (
+    SELECT h.incidente_id, h.fecha, h.tipo, e.es_final,
+           LAG(e.es_final) OVER (PARTITION BY h.incidente_id ORDER BY h.fecha, h.id) AS final_antes
+    FROM incidente_historial h JOIN estado_incidente e ON e.id = h.estado_id
+)
+SELECT (SELECT COUNT(*) FROM resp)                        AS respuestas_con_fuentes,
+       (SELECT COUNT(*) FROM resp WHERE resolvio)         AS resolvio,
+       (SELECT COUNT(*) FROM resp WHERE NOT resolvio)     AS no_resolvio,
+       (SELECT COUNT(*) FROM resp WHERE resolvio IS NULL) AS sin_indicar,
+       (SELECT COUNT(*) FROM asistidos)                   AS incidentes_asistidos,
+       (SELECT COUNT(DISTINCT a.incidente_id) FROM asistidos a
+        JOIN transiciones t ON t.incidente_id = a.incidente_id AND t.fecha > a.primera
+        WHERE t.tipo IN ('ACTUALIZACION', 'REAPERTURA') AND t.final_antes AND NOT t.es_final) AS reabiertos_tras_asistencia;
+
+-- ---------------------------------------------------------------------------
+-- 10. Incidentes por elemento de TI afectado (sin filtros; NULL = sin elemento)
+-- ---------------------------------------------------------------------------
+SELECT el.nombre AS elemento, el.tipo,
+       COUNT(*)                                AS total,
+       COUNT(*) FILTER (WHERE NOT e.es_final)  AS pendientes,
+       ROUND(CAST(AVG(EXTRACT(EPOCH FROM (i.fecha_resolucion - i.fecha_creacion)) / 3600.0)
+             FILTER (WHERE e.es_final) AS numeric), 2) AS tiempo_promedio_h
+FROM incidente i
+JOIN estado_incidente e  ON e.id = i.estado_id
+LEFT JOIN elemento_ti el ON el.id = i.elemento_id
+GROUP BY el.id, el.nombre, el.tipo
+ORDER BY (el.id IS NULL) DESC, total DESC, el.nombre;
+
+-- ---------------------------------------------------------------------------
+-- 11. Problemas con más incidentes vinculados (causa_confirmada solo si hay evidencia)
+-- ---------------------------------------------------------------------------
+SELECT p.id, p.titulo, p.estado,
+       (p.estado = 'CAUSA_CONFIRMADA')         AS causa_confirmada,
+       COUNT(i.id)                             AS incidentes,
+       COUNT(i.id) FILTER (WHERE NOT e.es_final) AS abiertos
+FROM problema p
+LEFT JOIN incidente i        ON i.problema_id = p.id
+LEFT JOIN estado_incidente e ON e.id = i.estado_id
+GROUP BY p.id, p.titulo, p.estado
+ORDER BY incidentes DESC, p.id;
+
+-- ---------------------------------------------------------------------------
+-- 12. Revisiones posteriores pendientes: incidentes finalizados sin revisión con prioridad
+--     de nivel >= 3 (Alta) o resueltos después del SLA de resolución
+-- ---------------------------------------------------------------------------
+SELECT i.id, i.titulo, p.nombre AS prioridad, i.fecha_resolucion,
+       p.nivel >= 3 AS prioridad_alta,
+       i.fecha_resolucion > i.fecha_creacion + make_interval(hours => p.sla_horas) AS sla_incumplido
+FROM incidente i
+JOIN estado_incidente e ON e.id = i.estado_id
+JOIN prioridad p        ON p.id = i.prioridad_id
+WHERE e.es_final AND i.fecha_resolucion IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM revision_incidente r WHERE r.incidente_id = i.id)
+  AND (p.nivel >= 3 OR i.fecha_resolucion > i.fecha_creacion + make_interval(hours => p.sla_horas))
+ORDER BY i.fecha_resolucion DESC, i.id DESC;

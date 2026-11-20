@@ -64,8 +64,15 @@ public class SeguridadConfig {
                     .requestMatchers("/api/usuarios/**").hasRole("ADMIN")
                     .requestMatchers(HttpMethod.GET, "/api/articulos/**").hasAnyRole(PERSONAL)
                     .requestMatchers("/api/articulos/**").hasRole("ADMIN")
+                    .requestMatchers("/api/importaciones/**").hasRole("ADMIN")
                     .requestMatchers("/api/analitica/**", "/api/consultas/**", "/api/respuestas/**").hasAnyRole(PERSONAL)
+                    .requestMatchers("/api/problemas/**").hasAnyRole(PERSONAL)
+                    .requestMatchers(HttpMethod.POST, "/api/alertas-sla/revisar").hasRole("ADMIN")
+                    .requestMatchers("/api/alertas-sla/**").hasAnyRole(PERSONAL)
+                    .requestMatchers("/api/incidentes/*/revision", "/api/revisiones/**").hasAnyRole(PERSONAL)
                     .requestMatchers("/api/incidentes/*/asistencia", "/api/incidentes/*/consultas").hasAnyRole(PERSONAL)
+                    // Reapertura excepcional de un incidente cerrado: solo administración (el servicio lo vuelve a comprobar).
+                    .requestMatchers(HttpMethod.POST, "/api/incidentes/*/reapertura").hasRole("ADMIN")
                     .requestMatchers(HttpMethod.PUT, "/api/incidentes/*").hasAnyRole(PERSONAL)
                     .requestMatchers(HttpMethod.PATCH, "/api/incidentes/*/estado").hasAnyRole(PERSONAL)
                     // Listar, ver y registrar incidentes: cualquier cuenta; el servicio limita al solicitante a los suyos.

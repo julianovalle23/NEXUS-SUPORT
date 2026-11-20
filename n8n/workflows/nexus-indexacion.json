@@ -1,0 +1,1126 @@
+{
+  "name": "NEXUS · Flujo 1 · Indexación de la base de conocimiento",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nexus/indexar",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a9b814b3-2eeb-406c-9923-04795b6e08bd",
+      "name": "Webhook indexación",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "90464c88-de27-48bb-9d0f-5d3dee303f03",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "nexusTokenIntern",
+          "name": "NEXUS - Token interno"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst DEFECTOS = {\n  NEXUS_BACKEND_URL: 'http://host.docker.internal:8080',\n  NEXUS_QDRANT_URL: 'http://host.docker.internal:6333',\n  NEXUS_QDRANT_COLLECTION: 'articulos_conocimiento',\n  NEXUS_OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',\n  NEXUS_EMBEDDING_MODEL: 'openai/text-embedding-3-small',\n  NEXUS_EMBEDDING_DIMENSION: '1536',\n  NEXUS_EMBEDDING_LOTE: '32',\n  NEXUS_QDRANT_SCROLL_LOTE: '256',\n  NEXUS_QDRANT_MAX_PAGINAS: '200',\n  NEXUS_MAX_CARACTERES_ARTICULO: '20000',\n};\n\n// Variables de entorno NEXUS_* de n8n; sin secretos (las claves viven en las credenciales).\n// Si la instancia bloquea $env se usan los valores por defecto y se informa en \"origen\".\nlet origen = 'entorno';\nconst leer = (clave) => {\n  let valor;\n  try { valor = $env[clave]; } catch (e) { origen = 'valores por defecto ($env bloqueado)'; }\n  return String(valor ?? '').trim() || DEFECTOS[clave];\n};\nconst url = (clave) => {\n  const v = leer(clave).replace(/\\/+$/, '');\n  exigir(/^https?:\\/\\/[^\\s/]+/.test(v), `[CONFIGURACION] ${clave} no es una URL http(s) válida`);\n  return v;\n};\nconst entero = (clave, min, max) => {\n  const n = Number(leer(clave));\n  exigir(Number.isInteger(n) && n >= min && n <= max, `[CONFIGURACION] ${clave} debe ser un entero entre ${min} y ${max}`);\n  return n;\n};\nconst nombre = (clave, patron = /^[\\w.\\/:-]{1,200}$/) => {\n  const v = leer(clave);\n  exigir(patron.test(v), `[CONFIGURACION] ${clave} tiene un valor inválido`);\n  return v;\n};\nconst COLECCION = /^[A-Za-z0-9_-]{1,200}$/;\n\nconst cfg = {\n  backendUrl: url('NEXUS_BACKEND_URL'),\n  qdrantUrl: url('NEXUS_QDRANT_URL'),\n  coleccion: nombre('NEXUS_QDRANT_COLLECTION', COLECCION),\n  openrouterUrl: url('NEXUS_OPENROUTER_BASE_URL'),\n  modeloEmbeddings: nombre('NEXUS_EMBEDDING_MODEL'),\n  dimension: entero('NEXUS_EMBEDDING_DIMENSION', 1, 65536),\n  // 32 textos de hasta 20 000 caracteres ≈ 200 000 tokens: por debajo del límite por solicitud de OpenAI (300 000)\n  loteEmbeddings: entero('NEXUS_EMBEDDING_LOTE', 1, 256),\n  loteScroll: entero('NEXUS_QDRANT_SCROLL_LOTE', 1, 10000),\n  maxPaginas: entero('NEXUS_QDRANT_MAX_PAGINAS', 1, 100000),\n  maxCaracteresArticulo: entero('NEXUS_MAX_CARACTERES_ARTICULO', 100, 30000),\n};\n\n// Solicitud: { \"forzar\"?: boolean }\nconst cuerpo = $('Webhook indexación').first().json.body ?? {};\nexigir(typeof cuerpo === 'object' && !Array.isArray(cuerpo), '[VALIDACION] El cuerpo debe ser un objeto JSON');\nconst desconocidos = Object.keys(cuerpo).filter(k => k !== 'forzar');\nexigir(desconocidos.length === 0, `[VALIDACION] Campos no admitidos: ${desconocidos.join(', ')}`);\nconst forzar = cuerpo.forzar ?? false;\nexigir(typeof forzar === 'boolean', '[VALIDACION] \"forzar\" debe ser booleano');\n\nreturn [{ json: { ...cfg, coleccionUrl: `${cfg.qdrantUrl}/collections/${cfg.coleccion}`, forzar, origen } }];\n"
+      },
+      "id": "fb858d75-e265-5c57-84ca-f44654ef41e4",
+      "name": "Configuración indexación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Configuración indexación').first().json.coleccionUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "8b78b0a5-19d7-5e25-a5b8-a46fee7d6288",
+      "name": "Leer colección",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst describir = (e) => [e?.httpCode && `HTTP ${e.httpCode}`, e?.message, e?.description]\n  .filter(t => typeof t === 'string' && t).join(' - ').slice(0, 300) || 'error desconocido';\n\n// 200: la colección existe y se comprueba su configuración; 404: hay que crearla; otro código es un fallo real.\nconst cfg = $('Configuración indexación').first().json;\nconst r = $input.first().json;\nexigir(!r.error, '[QDRANT] No se pudo leer la colección: ' + describir(r.error));\nconst codigo = Number(r.statusCode);\nexigir([200, 404].includes(codigo), `[QDRANT] Lectura de la colección: HTTP ${codigo} ${JSON.stringify(r.body ?? null).slice(0, 200)}`);\n\nconst existe = codigo === 200;\nconst vectores = r.body?.result?.config?.params?.vectors;\nconst indice = r.body?.result?.payload_schema?.fuente_valida;\nconst indiceModelo = r.body?.result?.payload_schema?.modelo;\nconst reglas = [\n  [typeof vectores?.size === 'number',\n   `[CONFIGURACION] La colección ${cfg.coleccion} no tiene un vector único sin nombre (vectors.size)`],\n  [vectores?.size === cfg.dimension,\n   `[CONFIGURACION] La colección ${cfg.coleccion} tiene dimensión ${vectores?.size} y NEXUS_EMBEDDING_DIMENSION es ` +\n   `${cfg.dimension}; recree la colección o corrija la configuración`],\n  [vectores?.distance === 'Cosine',\n   `[CONFIGURACION] La colección ${cfg.coleccion} usa la métrica ${vectores?.distance}; se requiere Cosine`],\n  [(indice?.data_type ?? 'bool') === 'bool',\n   `[CONFIGURACION] El índice de payload fuente_valida es de tipo ${indice?.data_type}; se requiere bool`],\n  [(indiceModelo?.data_type ?? 'keyword') === 'keyword',\n   `[CONFIGURACION] El índice de payload modelo es de tipo ${indiceModelo?.data_type}; se requiere keyword`],\n];\nreglas.filter(() => existe).forEach(([ok, mensaje]) => exigir(ok, mensaje));\n\nreturn [{ json: { crear: !existe } }];\n"
+      },
+      "id": "bbd487c5-e842-5bcd-8e36-641f203f0315",
+      "name": "Validar colección",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "295ecffe-67bd-5d3e-9620-90078b487eb6",
+              "leftValue": "={{ $json.crear }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fd311022-147d-51ae-a1ee-f8574aed74fb",
+      "name": "¿Crear colección?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Configuración indexación').first().json.coleccionUrl }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ vectors: { size: $('Configuración indexación').first().json.dimension, distance: 'Cosine' } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "9af5fb6a-39c2-5aaa-b3f8-fd7677290039",
+      "name": "Crear colección",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1104,
+        -208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst describir = (e) => [e?.httpCode && `HTTP ${e.httpCode}`, e?.message, e?.description]\n  .filter(t => typeof t === 'string' && t).join(' - ').slice(0, 300) || 'error desconocido';\n\n// Sin reintentos: si otro proceso creó la colección a la vez no se puede asegurar su configuración.\n// Qdrant responde \"already exists\" con HTTP 400/409: se distingue de los errores reales.\nconst r = $input.first().json;\nexigir(!r.error, '[QDRANT] No se pudo crear la colección: ' + describir(r.error));\nconst codigo = Number(r.statusCode);\nconst texto = JSON.stringify(r.body ?? null);\nexigir(!([400, 409].includes(codigo) && /already exists/i.test(texto)),\n       '[QDRANT_CONFLICTO] Otro proceso creó la colección durante esta indexación; vuelva a ejecutarla para verificar su configuración');\nexigir(codigo === 200 && r.body?.result === true, `[QDRANT] Creación de la colección: HTTP ${codigo} ${texto.slice(0, 200)}`);\nreturn [{ json: { creada: true } }];\n"
+      },
+      "id": "55883a09-3ecd-5466-89ea-ac30144ce651",
+      "name": "Validar creación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        -208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Configuración indexación').first().json.coleccionUrl }}/index?wait=true",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ field_name: $json.campo, field_schema: $json.esquema }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "552a6e26-1264-5115-87fc-ea1fa0c0ce6b",
+      "name": "Crear índices de payload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1552,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst describir = (e) => [e?.httpCode && `HTTP ${e.httpCode}`, e?.message, e?.description]\n  .filter(t => typeof t === 'string' && t).join(' - ').slice(0, 300) || 'error desconocido';\n\n// Crear un índice que ya existe con el mismo tipo es idempotente en Qdrant: se aseguran en cada ejecución.\n// Cada respuesta corresponde, en orden, a un ítem de \"Índices requeridos\".\nconst pedidos = $('Índices requeridos').all().map(i => i.json);\nconst respuestas = $input.all().map(i => i.json);\nexigir(respuestas.length === pedidos.length,\n       `[INTERNO] Se esperaban ${pedidos.length} respuestas de índices y llegaron ${respuestas.length}`);\nrespuestas.forEach((r, i) => {\n  const campo = pedidos[i].campo;\n  exigir(!r.error, `[QDRANT] No se pudo crear el índice ${campo}: ` + describir(r.error));\n  exigir(Number(r.statusCode) === 200 && r.body?.status === 'ok',\n         `[QDRANT] Índice ${campo}: HTTP ${r.statusCode} ${JSON.stringify(r.body ?? null).slice(0, 200)}`);\n});\nreturn [{ json: { indices: pedidos.map(x => x.campo) } }];\n"
+      },
+      "id": "3c385492-35e2-5dc1-8bbf-f4e3d5f2626c",
+      "name": "Validar índice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Configuración indexación').first().json.backendUrl }}/api/internal/articulos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "b2480370-a3ba-54b6-97f3-f2f9db4c8be9",
+      "name": "Obtener artículos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1984,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "nexusTokenIntern",
+          "name": "NEXUS - Token interno"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst describir = (e) => [e?.httpCode && `HTTP ${e.httpCode}`, e?.message, e?.description]\n  .filter(t => typeof t === 'string' && t).join(' - ').slice(0, 300) || 'error desconocido';\n\n// Contrato: { total, articulos: [{ id, titulo, categoria, texto, hash, fuenteValida, fechaActualizacion, origen?, importacionId? }] }.\n// origen (MANUAL | IMPORTACION) e importacionId son opcionales: un backend anterior no los envía y se asume MANUAL.\n// Una respuesta inválida detiene la indexación: tratarla como lista vacía borraría toda la colección.\nconst r = $input.first().json;\nexigir(!r.error, '[BACKEND] No se pudieron leer los artículos: ' + describir(r.error));\nconst lista = r.articulos;\nexigir(Number.isInteger(r.total) && Array.isArray(lista) && lista.length === r.total,\n       '[BACKEND_CONTRATO] Respuesta inesperada al leer los artículos: ' + JSON.stringify(r).slice(0, 200));\n\nconst ids = lista.map(a => a?.id);\nconst reglas = (a, i) => [\n  [Number.isSafeInteger(a?.id) && a.id > 0, 'id inválido'],\n  [ids.indexOf(a?.id) === i, 'duplicado'],\n  [typeof a?.fuenteValida === 'boolean', 'fuenteValida no es booleano'],\n  [typeof a?.hash === 'string' && /^[0-9a-f]{64}$/.test(a.hash), 'hash SHA-256 inválido'],\n  [typeof a?.texto === 'string' && a.texto.trim() !== '', 'texto vacío'],\n  [typeof a?.titulo === 'string' && a.titulo.trim() !== '', 'título vacío'],\n  [a?.categoria === undefined || a?.categoria === null || typeof a?.categoria === 'string', 'categoría inválida'],\n  [[undefined, null, 'MANUAL', 'IMPORTACION'].includes(a?.origen), 'origen inválido'],\n  [[undefined, null].includes(a?.importacionId) || (Number.isSafeInteger(a.importacionId) && a.importacionId > 0),\n   'importacionId inválido'],\n  [(a?.importacionId ?? null) === null || a?.origen === 'IMPORTACION', 'importacionId sin origen IMPORTACION'],\n  [[undefined, null].includes(a?.fechaActualizacion)\n   || (typeof a.fechaActualizacion === 'string' && /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}/.test(a.fechaActualizacion)),\n   'fechaActualizacion inválida'],\n];\nconst errores = lista.flatMap((a, i) => reglas(a, i).filter(([ok]) => !ok).map(([, m]) => `#${i} (id ${JSON.stringify(a?.id)}): ${m}`));\nexigir(errores.length === 0, '[BACKEND_CONTRATO] Artículos inválidos: ' + errores.slice(0, 5).join('; ') +\n       [` (y ${errores.length - 5} más)`].filter(() => errores.length > 5).join(''));\n\nreturn [{ json: {\n  siguiente: null,   // cursor inicial del scroll de Qdrant\n  articulos: lista.map(a => ({\n    id: a.id, titulo: a.titulo, categoria: a.categoria ?? null, texto: a.texto, hash: a.hash, fuenteValida: a.fuenteValida,\n    origen: a.origen ?? 'MANUAL', importacionId: a.importacionId ?? null,\n    // Versión del artículo (su fecha de actualización en Spring Boot) cuyo contenido se vectoriza\n    version: a.fechaActualizacion ?? null,\n  })),\n} }];\n"
+      },
+      "id": "d3e4f209-3f29-58e2-8d85-4a27a638b492",
+      "name": "Validar artículos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2208,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración indexación').first().json.coleccionUrl }}/points/scroll",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ limit: $('Configuración indexación').first().json.loteScroll, offset: $json.siguiente ?? undefined, with_payload: ['hash', 'modelo', 'origen', 'importacion_id'], with_vector: false }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "4a3faf8a-fb71-5291-beb5-88887b16604b",
+      "name": "Leer puntos de Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2432,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst describir = (e) => [e?.httpCode && `HTTP ${e.httpCode}`, e?.message, e?.description]\n  .filter(t => typeof t === 'string' && t).join(' - ').slice(0, 300) || 'error desconocido';\n\n// Se ejecuta una vez por página: reúne todas las páginas leídas (una por ejecución del nodo HTTP), las valida y\n// compara artículos (PostgreSQL) con puntos (Qdrant). No escribe nada: decide qué vectorizar y qué borrar.\nconst cfg = $('Configuración indexación').first().json;\nconst articulos = $('Validar artículos').first().json.articulos;\n\nconst paginas = Array.from({ length: $runIndex + 1 }, (_, run) => $('Leer puntos de Qdrant').all(0, run)[0]?.json);\npaginas.forEach((r, n) => {\n  exigir(r, `[INTERNO] Falta la página ${n + 1} del scroll de Qdrant`);\n  exigir(!r?.error, '[QDRANT] Falló la lectura de puntos: ' + describir(r?.error));\n  exigir(r?.status === 'ok' && Array.isArray(r?.result?.points),\n         '[QDRANT_CONTRATO] Respuesta inesperada del scroll: ' + JSON.stringify(r ?? null).slice(0, 200));\n});\nconst siguiente = paginas[paginas.length - 1].result.next_page_offset ?? null;\nexigir(siguiente === null || paginas.length < cfg.maxPaginas,\n       `[QDRANT] La colección supera ${cfg.maxPaginas} páginas de ${cfg.loteScroll} puntos (NEXUS_QDRANT_MAX_PAGINAS); ` +\n       'no se compara una lectura incompleta');\n\nconst puntos = paginas.flatMap(r => r.result.points);\nconst ids = puntos.map(p => p?.id);\nconst ajenos = puntos.filter((p, i) => !(Number.isSafeInteger(p?.id) && p.id > 0) || ids.indexOf(p.id) !== i);\nexigir(ajenos.length === 0, '[QDRANT_CONTRATO] La colección contiene puntos ajenos a este flujo o repetidos: ' +\n       ajenos.slice(0, 5).map(p => JSON.stringify(p?.id)).join(', '));\nconst indexados = new Map(puntos.map(p => [p.id, p.payload ?? {}]));\n\nconst validos = articulos.filter(a => a.fuenteValida);\nexigir(validos.length > 0 || indexados.size === 0 || cfg.forzar,\n       `[BACKEND_CONTRATO] El backend no informa ningún artículo válido y Qdrant tiene ${indexados.size} vectores; ` +\n       'no se borra la colección completa salvo con forzar=true');\nconst largos = validos.filter(a => a.texto.length > cfg.maxCaracteresArticulo).map(a => a.id);\nexigir(largos.length === 0, `[CONTENIDO] Artículos que superan ${cfg.maxCaracteresArticulo} caracteres ` +\n       `(NEXUS_MAX_CARACTERES_ARTICULO): ${largos.join(', ')}`);\n\n// Mismo contenido, mismo modelo y mismo origen: no se vuelve a vectorizar (salvo forzar). Los puntos escritos antes de\n// existir \"origen\" no lo tienen y se reescriben una vez para completarlo.\nconst vigente = (a) => !cfg.forzar && indexados.get(a.id)?.hash === a.hash && indexados.get(a.id)?.modelo === cfg.modeloEmbeddings\n  && indexados.get(a.id)?.origen === a.origen && (indexados.get(a.id)?.importacion_id ?? null) === a.importacionId;\nconst upserts = validos.filter(a => !vigente(a)).map(a => ({\n  id: a.id, titulo: a.titulo, categoria: a.categoria, hash: a.hash, texto: a.texto, origen: a.origen, importacionId: a.importacionId,\n  version: a.version,\n}));\nconst idsValidos = new Set(validos.map(a => a.id));\nconst idsUpsert = new Set(upserts.map(a => a.id));\n// Resultado por artículo (motivos con códigos fijos, sin texto del artículo). Lo que se va a vectorizar queda FALLIDO\n// hasta que \"Validar escritura\" confirme la escritura en Qdrant: nunca se declara procesado sin comprobarlo.\nconst resultadoInicial = (a) => [\n  [!a.fuenteValida, { resultado: 'OMITIDO', motivo: 'NO_ES_FUENTE_VALIDA' }],\n  [idsUpsert.has(a.id), { resultado: 'FALLIDO', motivo: 'ESCRITURA_NO_CONFIRMADA', tipoError: 'INTERNO' }],\n  [true, { resultado: 'OMITIDO', motivo: 'SIN_CAMBIOS' }],\n].find(([c]) => c)[1];\n// Inactivos, no verificados o inexistentes en la base relacional (solo tras leer TODAS las páginas sin error)\nconst eliminar = [...indexados.keys()].filter(id => !idsValidos.has(id));\n\nreturn [{ json: {\n  siguiente, upserts, eliminar,\n  // Respuesta base; los nodos siguientes solo confirman lo que realmente se escribió y se borró\n  cuerpo: {\n    estado: 'OK',\n    etapa: 'COMPLETADA',\n    mensaje: 'Indexación completada',\n    resumen: {\n      leidos: articulos.length,\n      fuentesValidas: validos.length,\n      excluidos: articulos.length - validos.length,\n      actualizados: 0,\n      omitidos: validos.length - upserts.length,\n      eliminados: 0,\n      fallidos: 0,\n    },\n    vectorizados: [],\n    eliminados: [],\n    fallidos: [],\n    articulos: articulos.map(a => ({ id: a.id, ...resultadoInicial(a) })),\n    sinCambios: validos.length - upserts.length,\n    totalArticulos: articulos.length,\n    coleccion: cfg.coleccion,\n    modeloEmbeddings: cfg.modeloEmbeddings,\n    dimension: cfg.dimension,\n    forzar: cfg.forzar,\n    configuracion: cfg.origen,\n  },\n} }];\n"
+      },
+      "id": "900e65a7-9b7b-599a-95e0-afccb0304a61",
+      "name": "Detectar cambios",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b3c96f4c-876c-5951-a9ee-c6725fe8cd07",
+              "leftValue": "={{ $json.siguiente !== null }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "60b2c449-30e6-59e5-9071-291619c23ab8",
+      "name": "¿Hay más páginas?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2864,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "01306b40-4598-5a7d-9fc8-bd9056b3fba7",
+              "leftValue": "={{ $json.upserts.length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "03688019-32b5-516f-80e2-ef25df73cde3",
+      "name": "¿Hay artículos para vectorizar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3088,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Organiza los artículos en lotes: un ítem por lote, así el nodo HTTP hace una solicitud de embeddings por lote.\nconst cfg = $('Configuración indexación').first().json;\nconst { upserts } = $input.first().json;\nreturn Array.from({ length: Math.ceil(upserts.length / cfg.loteEmbeddings) }, (_, lote) => ({ json: {\n  lote, articulos: upserts.slice(lote * cfg.loteEmbeddings, (lote + 1) * cfg.loteEmbeddings),\n} }));\n"
+      },
+      "id": "b7ef4141-0f53-57aa-b4b3-1452f5ba5ded",
+      "name": "Preparar lotes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3312,
+        -208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración indexación').first().json.openrouterUrl }}/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Title",
+              "value": "NEXUS Support"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Configuración indexación').first().json.modeloEmbeddings, input: $json.articulos.map(a => a.texto), encoding_format: 'float' }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "60449489-0d1b-5c46-aace-1f89a3baf1ed",
+      "name": "Generar embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        -208
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "openRouterApi": {
+          "id": "PvE6hq2SBOSib0Da",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst describir = (e) => [e?.httpCode && `HTTP ${e.httpCode}`, e?.message, e?.description]\n  .filter(t => typeof t === 'string' && t).join(' - ').slice(0, 300) || 'error desconocido';\n// Ítem de entrada que originó cada respuesta (n8n conserva pairedItem 1:1 en los nodos HTTP)\nconst indice = (item, i) => [item.pairedItem, item.pairedItem?.item, item.pairedItem?.[0]?.item].find(Number.isInteger) ?? i;\n// OpenRouter responde el modelo sin prefijo de proveedor (\"text-embedding-3-small\" para \"openai/text-embedding-3-small\")\nconst mismoModelo = (respondido, configurado) =>\n  [undefined, null].includes(respondido) || String(respondido).split('/').pop() === String(configurado).split('/').pop();\n\n// Valida cada lote por separado (cantidad, orden, modelo, dimensión y valores finitos). Los lotes correctos siguen a\n// Qdrant; los fallidos se informan como \"fallidos\" y bloquean el borrado de obsoletos. Si ninguno es válido, ERROR.\nconst cfg = $('Configuración indexación').first().json;\nconst lotes = $('Preparar lotes').all();\nconst respuestas = $input.all();\nexigir(respuestas.length === lotes.length,\n       `[INTERNO] Se esperaban ${lotes.length} respuestas de embeddings y llegaron ${respuestas.length}`);\nconst ahora = new Date().toISOString();\n\nconst validarLote = (item, i) => {\n  const { lote, articulos } = lotes[indice(item, i)].json;\n  const ids = articulos.map(a => a.id);\n  try {\n    const r = item.json;\n    exigir(!r.error, `[EMBEDDINGS] Lote ${lote + 1}: ` + describir(r.error));\n    exigir(Array.isArray(r.data), `[EMBEDDINGS_CONTRATO] Lote ${lote + 1}: respuesta sin \"data\": ` + JSON.stringify(r).slice(0, 200));\n    exigir(mismoModelo(r.model, cfg.modeloEmbeddings),\n           `[EMBEDDINGS_CONTRATO] Lote ${lote + 1}: se pidió ${cfg.modeloEmbeddings} y respondió ${r.model}`);\n    const datos = r.data.slice().sort((a, b) => (a.index ?? 0) - (b.index ?? 0));\n    exigir(datos.length === articulos.length && datos.every((d, k) => (d.index ?? k) === k),\n           `[EMBEDDINGS_CONTRATO] Lote ${lote + 1}: ${datos.length} embeddings para ${articulos.length} artículos`);\n    const points = articulos.map((a, k) => {\n      const v = datos[k].embedding;\n      exigir(Array.isArray(v) && v.length === cfg.dimension,\n             `[CONFIGURACION] ${cfg.modeloEmbeddings} devolvió ${v?.length ?? 0} dimensiones y la colección usa ` +\n             `${cfg.dimension} (NEXUS_EMBEDDING_DIMENSION)`);\n      exigir(v.every(Number.isFinite), `[EMBEDDINGS_CONTRATO] Artículo ${a.id}: el vector tiene valores no numéricos`);\n      return { id: a.id, vector: v, payload: {\n        articulo_id: a.id, titulo: a.titulo, categoria: a.categoria, hash: a.hash,\n        modelo: cfg.modeloEmbeddings, dimension: cfg.dimension, fuente_valida: true, indexado_en: ahora,\n        origen: a.origen, importacion_id: a.importacionId, version_articulo: a.version,\n      } };\n    });\n    return { lote, ids, points, fallo: null };\n  } catch (e) {\n    return { lote, ids, points: [], fallo: String(e.message).slice(0, 300) };\n  }\n};\nconst resultados = respuestas.map(validarLote);\nconst fallosEmbeddings = resultados.filter(x => x.fallo !== null).map(x => ({ lote: x.lote + 1, ids: x.ids, motivo: x.fallo }));\nconst correctos = resultados.filter(x => x.fallo === null);\nexigir(correctos.length > 0, `[EMBEDDINGS] Ningún lote obtuvo embeddings válidos (${fallosEmbeddings.length} lotes): ` +\n       String(fallosEmbeddings[0]?.motivo).replace(/^\\[[A-Z_]+\\]\\s*/, ''));\n\nreturn correctos.map(x => ({ json: { lote: x.lote, ids: x.ids, points: x.points, fallosEmbeddings } }));\n"
+      },
+      "id": "756ba1c1-2bd2-577c-826d-167689b1dc0b",
+      "name": "Validar embeddings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3744,
+        -208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Configuración indexación').first().json.coleccionUrl }}/points?wait=true",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ points: $json.points }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "954fcc5e-db05-5b2c-b72c-ea4d86a9cd6c",
+      "name": "Guardar vectores",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3968,
+        -208
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst describir = (e) => [e?.httpCode && `HTTP ${e.httpCode}`, e?.message, e?.description]\n  .filter(t => typeof t === 'string' && t).join(' - ').slice(0, 300) || 'error desconocido';\n// Tipos de error consistentes en los dos flujos: AUTENTICACION, VALIDACION, SERVICIO_NO_DISPONIBLE, TIMEOUT, INTERNO.\n// Solo SERVICIO_NO_DISPONIBLE y TIMEOUT son reintentables: repetir una autenticación o validación fallida no cambia nada.\nconst TIPOS = [\n  ['VALIDACION', (etapa) => ['VALIDACION', 'CONFIGURACION', 'CONTENIDO'].includes(etapa)],\n  ['TIMEOUT', (etapa, m) => /timed? ?out|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNABORTED/i.test(m)],\n  ['AUTENTICACION', (etapa, m) => /HTTP 40[13]\\b|\\b40[13] - |unauthori[sz]ed|forbidden|authorization failed|invalid api key/i.test(m)],\n  ['SERVICIO_NO_DISPONIBLE', (etapa, m) =>\n    /HTTP (429|5\\d\\d)\\b|\\b(429|5\\d\\d) - |ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET|socket hang up|unavailable|bad gateway|rate limit/i.test(m)],\n  ['INTERNO', () => true],\n];\nconst tipoError = (etapa, m) => TIPOS.find(([, t]) => t(etapa, String(m ?? '')))[0];\nconst REINTENTABLES = ['SERVICIO_NO_DISPONIBLE', 'TIMEOUT'];\nconst ocultar = (t) => String(t ?? '').replace(/sk-or-[\\w-]+|Bearer\\s+[\\w.~+\\/=-]+|X-Internal-Token\\S*\\s*[:=]\\s*\\S+/gi, '[oculto]')\n  .replace(/\\s+/g, ' ').trim();\n// Ítem de entrada que originó cada respuesta (n8n conserva pairedItem 1:1 en los nodos HTTP)\nconst indice = (item, i) => [item.pairedItem, item.pairedItem?.item, item.pairedItem?.[0]?.item].find(Number.isInteger) ?? i;\n\n// Upsert por id de artículo: repetirlo es idempotente. Consolida fallos de embeddings y de escritura: con cualquier\n// fallo la indexación termina en ERROR (resultado parcial) y NO se borran vectores obsoletos.\nconst lotes = $('Validar embeddings').all();\nconst respuestas = $input.all();\nexigir(respuestas.length === lotes.length, '[INTERNO] Cantidad de respuestas de escritura inesperada');\nconst plan = $('¿Hay artículos para vectorizar?').first().json;\n\nconst escrituras = respuestas.map((item, i) => {\n  const { lote, ids } = lotes[indice(item, i)].json;\n  const r = item.json;\n  const motivo = [\n    [!r.error, '[QDRANT] ' + describir(r.error)],\n    [r.status === 'ok' && r.result?.status === 'completed', '[QDRANT_CONTRATO] escritura no confirmada: ' + JSON.stringify(r).slice(0, 150)],\n  ].filter(([ok]) => !ok).map(([, m]) => m)[0] ?? null;\n  return { lote: lote + 1, ids, motivo, codigo: 'ESCRITURA_FALLIDA' };\n});\nconst fallos = [\n  ...lotes[0].json.fallosEmbeddings.map(f => ({ ...f, codigo: 'EMBEDDINGS_FALLIDOS' })),\n  ...escrituras.filter(x => x.motivo !== null),\n].map(f => ({ ...f, motivo: ocultar(f.motivo).slice(0, 300),\n              tipoError: tipoError(/^\\[([A-Z_]+)\\]/.exec(f.motivo ?? '')?.[1], f.motivo) }));\nconst escritos = escrituras.filter(x => x.motivo === null).flatMap(x => x.ids);\nconst fallidos = fallos.flatMap(f => f.ids);\nconst completa = fallos.length === 0;\nconst procesados = new Set(escritos);\nconst falloDe = new Map(fallos.flatMap(f => f.ids.map(id => [id, f])));\nconst porArticulo = (a) => [\n  [procesados.has(a.id), { id: a.id, resultado: 'PROCESADO', motivo: 'VECTORIZADO' }],\n  [falloDe.has(a.id), { id: a.id, resultado: 'FALLIDO', motivo: falloDe.get(a.id)?.codigo,\n                        tipoError: falloDe.get(a.id)?.tipoError, detalle: String(falloDe.get(a.id)?.motivo).slice(0, 200) }],\n  [true, a],\n].find(([c]) => c)[1];\n// Reintentar es útil solo si todos los fallos son transitorios (servicio no disponible o timeout)\nconst reintentable = fallos.length > 0 && fallos.every(f => REINTENTABLES.includes(f.tipoError));\n\nconst resultado = {\n  true: { estado: 'OK', etapa: 'COMPLETADA', mensaje: 'Indexación completada' },\n  false: { estado: 'ERROR', etapa: 'INDEXACION_PARCIAL', tipoError: fallos[0]?.tipoError, reintentable,\n           mensaje: `${fallidos.length} artículos no se indexaron (${fallos.length} lotes con error); ` +\n                    `se guardaron ${escritos.length} y no se eliminó ningún vector obsoleto. ` + fallos[0]?.motivo },\n}[completa];\nconst cuerpo = {\n  ...plan.cuerpo, ...resultado,\n  resumen: { ...plan.cuerpo.resumen, actualizados: escritos.length, fallidos: fallidos.length },\n  vectorizados: escritos,\n  fallidos,\n  detalleFallos: fallos,\n  articulos: plan.cuerpo.articulos.map(porArticulo),\n};\nreturn [{ json: { completa, eliminar: plan.eliminar, cuerpo } }];\n"
+      },
+      "id": "6a912067-bc9b-5528-a66b-95b1755b9b43",
+      "name": "Validar escritura",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4192,
+        -208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3bc424e8-626d-5ff8-aa80-2144ccc1cfff",
+              "leftValue": "={{ $json.completa }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "57e012bd-b10f-5cdf-b1df-eccb2e55b229",
+      "name": "¿Escritura completa?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4400,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d3e425b4-a0c3-545e-a9d5-a3dad7aa9943",
+              "leftValue": "={{ $json.eliminar.length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f5e6ed3a-8b81-54e0-8e25-fa7a274ab089",
+      "name": "¿Hay vectores para eliminar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4608,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Configuración indexación').first().json.coleccionUrl }}/points/delete?wait=true",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ points: $json.eliminar }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "21ab786a-57d6-561c-bf94-a5c3d281ba17",
+      "name": "Eliminar vectores obsoletos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4848,
+        -208
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const exigir = (ok, mensaje) => [ok].filter(v => !v).forEach(() => { throw new Error(mensaje); });\nconst describir = (e) => [e?.httpCode && `HTTP ${e.httpCode}`, e?.message, e?.description]\n  .filter(t => typeof t === 'string' && t).join(' - ').slice(0, 300) || 'error desconocido';\n\n// El borrado va después de las escrituras y solo si todas se confirmaron; repetirlo es idempotente.\nconst r = $input.first().json;\nexigir(!r.error, '[QDRANT] No se eliminaron los vectores obsoletos: ' + describir(r.error));\nexigir(r.status === 'ok' && r.result?.status === 'completed',\n       '[QDRANT_CONTRATO] Borrado no confirmado: ' + JSON.stringify(r).slice(0, 200));\nconst { eliminar, cuerpo } = $('¿Hay vectores para eliminar?').first().json;\nreturn [{ json: { cuerpo: { ...cuerpo, eliminados: eliminar, resumen: { ...cuerpo.resumen, eliminados: eliminar.length } } } }];\n"
+      },
+      "id": "4b86c4b6-3367-522d-977b-26de29591926",
+      "name": "Validar borrado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5072,
+        -208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tipos de error consistentes en los dos flujos: AUTENTICACION, VALIDACION, SERVICIO_NO_DISPONIBLE, TIMEOUT, INTERNO.\n// Solo SERVICIO_NO_DISPONIBLE y TIMEOUT son reintentables: repetir una autenticación o validación fallida no cambia nada.\nconst TIPOS = [\n  ['VALIDACION', (etapa) => ['VALIDACION', 'CONFIGURACION', 'CONTENIDO'].includes(etapa)],\n  ['TIMEOUT', (etapa, m) => /timed? ?out|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNABORTED/i.test(m)],\n  ['AUTENTICACION', (etapa, m) => /HTTP 40[13]\\b|\\b40[13] - |unauthori[sz]ed|forbidden|authorization failed|invalid api key/i.test(m)],\n  ['SERVICIO_NO_DISPONIBLE', (etapa, m) =>\n    /HTTP (429|5\\d\\d)\\b|\\b(429|5\\d\\d) - |ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET|socket hang up|unavailable|bad gateway|rate limit/i.test(m)],\n  ['INTERNO', () => true],\n];\nconst tipoError = (etapa, m) => TIPOS.find(([, t]) => t(etapa, String(m ?? '')))[0];\nconst REINTENTABLES = ['SERVICIO_NO_DISPONIBLE', 'TIMEOUT'];\nconst ocultar = (t) => String(t ?? '').replace(/sk-or-[\\w-]+|Bearer\\s+[\\w.~+\\/=-]+|X-Internal-Token\\S*\\s*[:=]\\s*\\S+/gi, '[oculto]')\n  .replace(/\\s+/g, ' ').trim();\n\n// Punto único de error del flujo. Etapa = prefijo [ETAPA] del mensaje; sin prefijo es un error INTERNO.\nconst j = $input.first().json;\nconst bruto = String([j.error?.message, j.error, j.message].find(v => typeof v === 'string') ?? JSON.stringify(j));\nconst [, etapa, texto] = /^\\[([A-Z_]+)\\]\\s*([\\s\\S]*)$/.exec(bruto) ?? [null, 'INTERNO', 'Error interno del flujo: ' + bruto];\n// Nunca devolver secretos que pudieran venir en un mensaje de error\nconst mensaje = ocultar(texto).slice(0, 400);\nconst tipo = tipoError(etapa, texto);\n\n// Último resultado por artículo conocido: tras \"Validar escritura\" (fallo al borrar) o tras \"Detectar cambios\" (fallo\n// en embeddings o escritura). Un nodo no ejecutado lanza al referenciarlo: se ignora. Lo no confirmado queda FALLIDO.\nconst previo = (nodo) => { try { return $(nodo).last()?.json?.cuerpo ?? null; } catch (e) { return null; } };\nconst base = ['Validar escritura', 'Detectar cambios'].map(previo).find(c => Array.isArray(c?.articulos)) ?? null;\nconst articulos = (base?.articulos ?? []).map(a => [\n  [a.resultado === 'FALLIDO', { ...a, tipoError: { INTERNO: tipo }[a.tipoError] ?? a.tipoError }],\n  [true, a],\n].find(([c]) => c)[1]);\nconst ids = (r) => articulos.filter(a => a.resultado === r).map(a => a.id);\n\nreturn [{ json: { cuerpo: {\n  estado: 'ERROR', etapa, mensaje, tipoError: tipo, reintentable: REINTENTABLES.includes(tipo),\n  generadoEn: new Date().toISOString(),\n  resumen: [base?.resumen].filter(Boolean).map(r => ({ ...r, actualizados: ids('PROCESADO').length,\n    fallidos: ids('FALLIDO').length, eliminados: 0 }))[0] ?? null,\n  vectorizados: ids('PROCESADO'), eliminados: [], fallidos: ids('FALLIDO'), articulos,\n} } }];\n"
+      },
+      "id": "9740884a-1ecc-5701-b5dc-a974052ab95d",
+      "name": "Clasificar error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5072,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify(Object.assign({}, $json.cuerpo, {\n  correlationId: [$('Webhook indexación').first().json.headers['x-correlation-id']]\n    .find(v => typeof v === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(v)) ?? null,\n  ejecucionId: String($execution.id),\n})) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "83686455-fe40-5843-8398-b405dbb26fad",
+      "name": "Responder",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        5312,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## NEXUS · Flujo 1 · Indexación de la base de conocimiento\n**POST /webhook/nexus/indexar** · cabecera `X-Internal-Token` (credencial *NEXUS - Token interno*).\nEntrada `{ \"forzar\"?: boolean }` → salida única HTTP 200 `{ estado: OK | ERROR, etapa, mensaje, resumen{leidos, fuentesValidas, excluidos, actualizados, omitidos, eliminados, fallidos}, vectorizados[], eliminados[], fallidos[] }`.\n\nCada etapa: **HTTP → script de validación** (sin `if`; reglas `exigir`). Las rutas las deciden los nodos IF. Todo error termina en **Clasificar error → Responder**.\n\nSeguridad de datos: el borrado de obsoletos solo ocurre tras leer **todas** las páginas de Qdrant y confirmar **todas** las escrituras. Un fallo parcial responde `ERROR / INDEXACION_PARCIAL` con los ids fallidos y no borra nada.",
+        "height": 420,
+        "width": 940,
+        "color": 7
+      },
+      "id": "ac2c3079-db9e-521b-b85c-b3e90f7cdaac",
+      "name": "Nota indexación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        -768
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 1.1 · Entrada y configuración\nValida `forzar` y lee `NEXUS_*`.",
+        "height": 480,
+        "width": 440,
+        "color": 4
+      },
+      "id": "ffdc8dc9-f933-56d3-8519-e6f0b4281170",
+      "name": "Etapa 1.1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 1.2 · Colección e índice en Qdrant\nDimensión, Cosine e índices de payload `fuente_valida` (bool) y `modelo` (keyword), los campos que filtra la búsqueda. 404 → crear; *already exists* ≠ error real.",
+        "height": 480,
+        "width": 1520,
+        "color": 4
+      },
+      "id": "aa8383b8-d9d0-5f0d-b377-8cde1bd2b784",
+      "name": "Etapa 1.2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        400,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 1.3 · Artículos y cambios\nContrato del backend → scroll paginado completo → comparación por id, hash, modelo y origen (MANUAL / IMPORTACION).",
+        "height": 480,
+        "width": 1340,
+        "color": 4
+      },
+      "id": "8977de41-345a-5463-9ba0-e6e3300e7d49",
+      "name": "Etapa 1.3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1952,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 1.4 · Embeddings por lote y escritura\nLotes de `NEXUS_EMBEDDING_LOTE`, validación por lote, upsert idempotente.",
+        "height": 480,
+        "width": 1300,
+        "color": 4
+      },
+      "id": "2bd2b1b8-f955-5f13-8a81-f0ab4cd8b1f9",
+      "name": "Etapa 1.4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3280,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 1.5 · Borrado de obsoletos\nSolo si todas las escrituras se confirmaron.",
+        "height": 480,
+        "width": 680,
+        "color": 4
+      },
+      "id": "68566374-d824-5a03-aaf3-1ff032688757",
+      "name": "Etapa 1.5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4592,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Salida única\nErrores y resultados → **Responder** (HTTP 200).",
+        "height": 240,
+        "width": 520,
+        "color": 3
+      },
+      "id": "1d1eac04-5643-5032-a97d-5785d34e25c2",
+      "name": "Etapa 1.6",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5008,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Índices de payload de los campos por los que se filtra (verificado con Qdrant 1.20):\n//   fuente_valida (bool):  la búsqueda RAG solo considera fuentes válidas.\n//   modelo (keyword):      la búsqueda RAG solo considera vectores del modelo de embeddings actual.\n// articulo_id no se indexa: es el id del punto. categoria no se usa en ningún filtro.\nreturn [\n  { json: { campo: 'fuente_valida', esquema: 'bool' } },\n  { json: { campo: 'modelo', esquema: 'keyword' } },\n];\n"
+      },
+      "id": "3a012473-f113-5ddf-8619-b637593cd0f7",
+      "name": "Índices requeridos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook indexación": {
+      "main": [
+        [
+          {
+            "node": "Configuración indexación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuración indexación": {
+      "main": [
+        [
+          {
+            "node": "Leer colección",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer colección": {
+      "main": [
+        [
+          {
+            "node": "Validar colección",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar colección": {
+      "main": [
+        [
+          {
+            "node": "¿Crear colección?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Crear colección?": {
+      "main": [
+        [
+          {
+            "node": "Crear colección",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Índices requeridos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear colección": {
+      "main": [
+        [
+          {
+            "node": "Validar creación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar creación": {
+      "main": [
+        [
+          {
+            "node": "Índices requeridos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar índice": {
+      "main": [
+        [
+          {
+            "node": "Obtener artículos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener artículos": {
+      "main": [
+        [
+          {
+            "node": "Validar artículos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar artículos": {
+      "main": [
+        [
+          {
+            "node": "Leer puntos de Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer puntos de Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Detectar cambios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar cambios": {
+      "main": [
+        [
+          {
+            "node": "¿Hay más páginas?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay más páginas?": {
+      "main": [
+        [
+          {
+            "node": "Leer puntos de Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Hay artículos para vectorizar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay artículos para vectorizar?": {
+      "main": [
+        [
+          {
+            "node": "Preparar lotes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Hay vectores para eliminar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar lotes": {
+      "main": [
+        [
+          {
+            "node": "Generar embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar embeddings": {
+      "main": [
+        [
+          {
+            "node": "Validar embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar embeddings": {
+      "main": [
+        [
+          {
+            "node": "Guardar vectores",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar vectores": {
+      "main": [
+        [
+          {
+            "node": "Validar escritura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar escritura": {
+      "main": [
+        [
+          {
+            "node": "¿Escritura completa?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Escritura completa?": {
+      "main": [
+        [
+          {
+            "node": "¿Hay vectores para eliminar?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay vectores para eliminar?": {
+      "main": [
+        [
+          {
+            "node": "Eliminar vectores obsoletos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eliminar vectores obsoletos": {
+      "main": [
+        [
+          {
+            "node": "Validar borrado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar borrado": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar error": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear índices de payload": {
+      "main": [
+        [
+          {
+            "node": "Validar índice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Índices requeridos": {
+      "main": [
+        [
+          {
+            "node": "Crear índices de payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": false,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 1800,
+    "binaryMode": "separate"
+  },
+  "active": false,
+  "pinData": {}
+}

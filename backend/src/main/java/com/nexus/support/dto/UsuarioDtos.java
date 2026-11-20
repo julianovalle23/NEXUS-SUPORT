@@ -1,5 +1,8 @@
 package com.nexus.support.dto;
 
+import java.time.LocalDateTime;
+
+import com.nexus.support.domain.AuditoriaUsuario;
 import com.nexus.support.domain.Rol;
 import com.nexus.support.domain.Usuario;
 import com.nexus.support.security.CuentaUsuario;
@@ -65,6 +68,18 @@ public final class UsuarioDtos {
         public static UsuarioResponse de(Usuario u) {
             return new UsuarioResponse(u.getId(), u.getNombre(), u.getCorreo(), u.getArea(), u.getRol(),
                     u.isActivo(), u.getClaveHash() != null);
+        }
+    }
+
+    /** actor nulo = cambio hecho al arrancar la aplicación (cuenta de administración inicial). */
+    public record AuditoriaDto(Long id, LocalDateTime fecha, AuditoriaUsuario.Origen origen, String actor,
+                               Long usuarioId, String usuario, Rol rolAnterior, Rol rolNuevo,
+                               Boolean activoAnterior, boolean activoNuevo) {
+        public static AuditoriaDto de(AuditoriaUsuario a) {
+            return new AuditoriaDto(a.getId(), a.getFecha(), a.getOrigen(),
+                    a.getActor() == null ? null : a.getActor().getNombre(),
+                    a.getUsuario().getId(), a.getUsuario().getNombre(), a.getRolAnterior(), a.getRolNuevo(),
+                    a.getActivoAnterior(), a.isActivoNuevo());
         }
     }
 }

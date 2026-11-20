@@ -2,6 +2,7 @@ package com.nexus.support.controller;
 
 import java.net.URI;
 import java.time.LocalDate;
+import java.util.List;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -9,9 +10,12 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import com.nexus.support.dto.AnaliticaDtos.PrimeraRespuesta;
 import com.nexus.support.dto.IncidenteDtos.CambioEstadoRequest;
+import com.nexus.support.dto.IncidenteDtos.HistorialDto;
 import com.nexus.support.dto.IncidenteDtos.IncidenteRequest;
 import com.nexus.support.dto.IncidenteDtos.IncidenteResponse;
+import com.nexus.support.dto.IncidenteDtos.ReaperturaRequest;
 import com.nexus.support.dto.PaginaDto;
 import com.nexus.support.service.IncidenteService;
 
@@ -53,6 +57,18 @@ public class IncidenteController {
         return service.obtener(id);
     }
 
+    @GetMapping("/{id}/historial")
+    @Operation(summary = "Historial de estado, prioridad y responsable (más antiguo primero)")
+    public List<HistorialDto> historial(@PathVariable Long id) {
+        return service.historial(id);
+    }
+
+    @GetMapping("/{id}/primera-respuesta")
+    @Operation(summary = "SLA de primera respuesta (objetivo de sla_objetivo; respuesta = salir del estado inicial)")
+    public PrimeraRespuesta primeraRespuesta(@PathVariable Long id) {
+        return service.primeraRespuesta(id);
+    }
+
     @PostMapping
     @Operation(summary = "Registrar un incidente")
     public ResponseEntity<IncidenteResponse> crear(@Valid @RequestBody IncidenteRequest req) {
@@ -70,5 +86,19 @@ public class IncidenteController {
     @Operation(summary = "Actualizar el estado de un incidente (registra la fecha de resolución si es final)")
     public IncidenteResponse cambiarEstado(@PathVariable Long id, @Valid @RequestBody CambioEstadoRequest req) {
         return service.cambiarEstado(id, req.estadoId());
+    }
+
+    @PostMapping("/{id}/reapertura")
+    @Operation(summary = "Reapertura excepcional de un incidente cerrado (solo ADMIN, motivo obligatorio, queda en el historial)")
+    public IncidenteResponse reabrir(@PathVariable Long id, @Valid @RequestBody ReaperturaRequest req) {
+        return service.reabrir(id, req.estadoId(), req.motivo());
+    }
+
+    @PostMapping("/{id}/seguimiento")
+    @Operation(summary = "Registrar un incidente nuevo que da seguimiento a uno cerrado (el original no se modifica)")
+    public ResponseEntity<IncidenteResponse> seguimiento(@PathVariable Long id,
+                                                         @Valid @RequestBody IncidenteRequest req) {
+        IncidenteResponse creado = service.registrarSeguimiento(id, req);
+        return ResponseEntity.created(URI.create("/api/incidentes/" + creado.id())).body(creado);
     }
 }

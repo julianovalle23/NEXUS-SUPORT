@@ -16,6 +16,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import com.nexus.support.service.N8nClient;
@@ -61,6 +63,16 @@ public class GlobalExceptionHandler {
             IllegalArgumentException.class})
     ResponseEntity<ErrorResponse> peticionInvalida(Exception ex) {
         return construir(HttpStatus.BAD_REQUEST, "Petición mal formada: " + ex.getMessage(), null);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ResponseEntity<ErrorResponse> archivoGrande(MaxUploadSizeExceededException ex) {
+        return construir(HttpStatus.PAYLOAD_TOO_LARGE, "El archivo supera el tamaño máximo permitido (1 MB)", null);
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    ResponseEntity<ErrorResponse> faltaArchivo(MissingServletRequestPartException ex) {
+        return construir(HttpStatus.BAD_REQUEST, "Falta el archivo en la petición (campo «" + ex.getRequestPartName() + "»)", null);
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

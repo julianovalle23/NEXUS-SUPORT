@@ -2,7 +2,6 @@ package com.nexus.support.controller;
 
 import java.net.URI;
 import java.util.List;
-import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -12,6 +11,7 @@ import com.nexus.support.dto.ArticuloDtos.ArticuloResponse;
 import com.nexus.support.dto.ArticuloDtos.EstadoArticuloRequest;
 import com.nexus.support.service.ArticuloService;
 import com.nexus.support.service.IndexacionService;
+import com.nexus.support.service.IndexacionService.EstadoIndexacion;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -63,9 +63,17 @@ public class ArticuloController {
     }
 
     @PostMapping("/reindexar")
-    @Operation(summary = "Ejecutar el flujo de indexación de n8n (RF03)",
-            description = "Con forzar=true vuelve a generar todos los embeddings aunque el contenido no haya cambiado.")
-    public Map<String, Object> reindexar(@RequestParam(defaultValue = "false") boolean forzar) {
-        return indexacion.indexarAhora(forzar);
+    @Operation(summary = "Solicitar el flujo de indexación de n8n (RF03)",
+            description = "Responde 202 sin esperar a n8n. Si ya hay una indexación en curso, la solicitud queda "
+                    + "pendiente y se atiende al terminar. Con forzar=true vuelve a generar todos los embeddings. "
+                    + "El resultado se consulta en GET /api/articulos/indexacion.")
+    public ResponseEntity<EstadoIndexacion> reindexar(@RequestParam(defaultValue = "false") boolean forzar) {
+        return ResponseEntity.accepted().body(indexacion.solicitar(forzar, IndexacionService.Origen.MANUAL));
+    }
+
+    @GetMapping("/indexacion")
+    @Operation(summary = "Estado de la última indexación o de la que está en curso")
+    public EstadoIndexacion estadoIndexacion() {
+        return indexacion.estado();
     }
 }

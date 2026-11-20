@@ -53,8 +53,14 @@ public class RespuestaIA {
         if (fecha == null) fecha = LocalDateTime.now();
     }
 
-    public void agregarFuente(ArticuloConocimiento articulo, BigDecimal similitud) {
-        fuentes.add(new FuenteRespuesta(this, articulo, similitud));
+    /** @param usada true si el modelo citó el artículo; false si solo fue un candidato entregado como contexto */
+    public void agregarFuente(ArticuloConocimiento articulo, BigDecimal similitud, boolean usada) {
+        fuentes.add(new FuenteRespuesta(this, articulo, similitud, usada));
+    }
+
+    /** Fuentes citadas por el modelo: las únicas que cuentan como evidencia de la respuesta. */
+    public List<FuenteRespuesta> getFuentesUsadas() {
+        return fuentes.stream().filter(FuenteRespuesta::isUsada).toList();
     }
 
     public Long getId() { return id; }

@@ -51,7 +51,8 @@
 
 <dialog id="dlg-nuevo">
   <form id="form-nuevo" method="dialog">
-    <h2>Nuevo incidente</h2>
+    <h2 id="n-titulo-dialogo">Nuevo incidente</h2>
+    <p class="muted" id="n-seguimiento" hidden></p>
     <div class="field"><label for="n-titulo">Título *</label><input id="n-titulo" name="titulo" maxlength="200" required></div>
     <div class="field"><label for="n-descripcion">Descripción *</label><textarea id="n-descripcion" name="descripcion" required></textarea></div>
     <div class="row">
@@ -59,6 +60,12 @@
       <div class="field"><label for="n-prioridad">Prioridad *</label><select id="n-prioridad" name="prioridadId" required></select></div>
       <div class="field" data-roles="TECNICO ADMIN"><label for="n-usuario">Técnico responsable *</label><select id="n-usuario" name="usuarioId" required></select></div>
     </div>
+    <div class="field campo-elemento"><label for="n-elemento">Equipo, aplicación o servicio afectado</label><select id="n-elemento" name="elementoId"></select></div>
+    <fieldset class="guiado">
+      <legend>Ingreso guiado <span class="muted">(opcional, mejora la búsqueda del asistente)</span></legend>
+      <div class="field"><label for="n-mensaje">Mensaje de error</label><textarea id="n-mensaje" name="mensajeError" maxlength="1000" rows="2" placeholder="Copie el texto exacto del error, por ejemplo: 0x800CCC0E No se puede conectar con el servidor"></textarea></div>
+      <div class="field"><label for="n-pasos">Pasos ya intentados</label><textarea id="n-pasos" name="pasosIntentados" maxlength="2000" rows="2" placeholder="Por ejemplo: reinicié el equipo, probé con otro usuario"></textarea></div>
+    </fieldset>
     <p class="muted" data-roles="SOLICITANTE">El incidente se asigna automáticamente al técnico con menos incidentes abiertos.</p>
     <div class="field" data-roles="TECNICO ADMIN"><label for="n-solicitante">Solicitante (quien reporta)</label><input id="n-solicitante" name="solicitante" maxlength="120" placeholder="Opcional: nombre o área de quien reporta"></div>
     <div class="errors" id="n-errores"></div>
@@ -79,6 +86,12 @@
       <div class="field"><label for="e-prioridad">Prioridad *</label><select id="e-prioridad" name="prioridadId" required></select></div>
       <div class="field"><label for="e-usuario">Técnico responsable *</label><select id="e-usuario" name="usuarioId" required></select></div>
     </div>
+    <div class="field campo-elemento"><label for="e-elemento">Equipo, aplicación o servicio afectado</label><select id="e-elemento" name="elementoId"></select></div>
+    <fieldset class="guiado">
+      <legend>Ingreso guiado <span class="muted">(opcional, mejora la búsqueda del asistente)</span></legend>
+      <div class="field"><label for="e-mensaje">Mensaje de error</label><textarea id="e-mensaje" name="mensajeError" maxlength="1000" rows="2" placeholder="Copie el texto exacto del error, por ejemplo: 0x800CCC0E No se puede conectar con el servidor"></textarea></div>
+      <div class="field"><label for="e-pasos">Pasos ya intentados</label><textarea id="e-pasos" name="pasosIntentados" maxlength="2000" rows="2" placeholder="Por ejemplo: reinicié el equipo, probé con otro usuario"></textarea></div>
+    </fieldset>
     <div class="field"><label for="e-solicitante">Solicitante (quien reporta)</label><input id="e-solicitante" name="solicitante" maxlength="120"></div>
     <p class="muted">Cambiar la prioridad recalcula el SLA desde la fecha de creación. El estado se cambia desde el detalle.</p>
     <div class="errors" id="e-errores"></div>
@@ -95,6 +108,18 @@
 <script>
 const estado = { pagina: 0, tamano: 15, catalogos: null, seleccionado: null };
 const $ = (s) => document.querySelector(s);
+
+const TIPO_ELEMENTO = { EQUIPO: 'Equipo', APLICACION: 'Aplicación', SERVICIO: 'Servicio' };
+
+/** Elementos activos como opciones "Nombre · Tipo". */
+function opcionesElemento(elementos) {
+  return elementos.map((e) => ({ id: e.id, nombre: `${e.nombre} · ${TIPO_ELEMENTO[e.tipo] ?? e.tipo}` }));
+}
+
+/** El formulario envía texto; vacío = sin elemento (null). */
+function normalizarElemento(datos) {
+  datos.elementoId = datos.elementoId ? Number(datos.elementoId) : null;
+}
 
 async function iniciar() {
   try {
@@ -116,6 +141,9 @@ async function iniciar() {
   llenarSelect($('#e-categoria'), c.categorias);
   llenarSelect($('#e-prioridad'), c.prioridades);
   $('#n-prioridad').value = c.prioridades.find((p) => p.nivel === 2)?.id ?? '';
+  llenarSelect($('#n-elemento'), opcionesElemento(c.elementos), { vacio: 'No aplica / no sé' });
+  // Sin elementos en el catálogo no se muestra el campo
+  if (!c.elementos.length) document.querySelectorAll('.campo-elemento').forEach((el) => { el.hidden = true; });
 
   // Permite abrir un incidente directamente: incidentes.html?id=12
   const id = new URLSearchParams(location.search).get('id');
@@ -160,30 +188,71 @@ async function seleccionar(id) {
   panel.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
   try {
     // El historial de asistencias solo lo ven técnicos y administradores
-    const [inc, historial] = await Promise.all([api.incidente(id),
-      tieneRol(...PERSONAL) ? api.historialIncidente(id) : Promise.resolve([])]);
-    pintarDetalle(inc, historial);
+    const personal = tieneRol(...PERSONAL);
+    const [inc, historial, pr, rev] = await Promise.all([api.incidente(id),
+      personal ? api.historialIncidente(id) : Promise.resolve([]),
+      // Si fallan, el detalle se muestra igual sin estos datos
+      api.primeraRespuesta(id).catch(() => null),
+      personal ? api.revision(id).catch(() => null) : Promise.resolve(null)]);
+    pintarDetalle(inc, historial, pr);
+    if (rev) pintarRevision(rev);
   } catch (e) {
     panel.innerHTML = `<div class="empty">No se pudo cargar el incidente.</div>`;
     mostrarError(e);
   }
 }
 
-function pintarDetalle(inc, historial) {
+/** Texto de la primera respuesta: objetivo, cuándo se respondió o cuánto queda. */
+function textoPrimeraRespuesta(pr) {
+  if (pr.estado === 'SIN_OBJETIVO') return 'No hay objetivo configurado para esta prioridad y categoría';
+  if (pr.estado === 'SIN_DATOS') return `Objetivo ${num(pr.objetivoMinutos)} min · respondido antes del historial, sin fecha`;
+  const base = `Objetivo ${num(pr.objetivoMinutos)} min · vence ${fecha(pr.vence)}`;
+  if (pr.respondidoEn) return `${base} · respondido ${fecha(pr.respondidoEn)}`;
+  return `${base} · ${horasRestantes(pr.minutosRestantes / 60)}`;
+}
+
+function pintarDetalle(inc, historial, pr) {
   const panel = $('#detalle');
   const personal = tieneRol(...PERSONAL);
-  const opciones = estado.catalogos.estados.map((e) =>
-    `<option value="${e.id}" ${e.id === inc.estado.id ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('');
-  const campoEstado = personal
+  // Las reglas las aplica el servidor (transicion_estado); aquí solo se ofrecen los destinos permitidos.
+  const actual = estado.catalogos.estados.find((e) => e.id === inc.estado.id);
+  const terminal = actual?.terminal ?? false;
+  const admin = tieneRol('ADMIN');
+  const destinos = estado.catalogos.estados.filter((e) => actual?.destinos.includes(e.id));
+  const opciones = [`<option value="${inc.estado.id}" selected>${esc(inc.estado.nombre)} (actual)</option>`,
+    ...destinos.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`)].join('');
+  const campoEstado = personal && !terminal
     ? `<dd style="display:flex;gap:8px"><select id="d-estado" aria-label="Estado">${opciones}</select>
           <button class="btn small" id="d-guardar-estado" type="button">Actualizar</button></dd>`
-    : `<dd>${badgeEstadoIncidente(inc.estado.nombre)}</dd>`;
+    : `<dd>${badgeEstadoIncidente(inc.estado.nombre)}${terminal ? ' <span class="muted">Estado terminal: no admite cambios.</span>' : ''}</dd>`;
+  const reabribles = estado.catalogos.estados.filter((e) => !e.esFinal && !e.terminal);
+  const cierre = !terminal ? '' : `
+    <h3>Caso cerrado</h3>
+    <p class="muted">Un incidente cerrado no se modifica. Si el problema continúa o reaparece, registre un incidente
+      nuevo de seguimiento: quedará vinculado a este sin alterar su historial.</p>
+    <div style="margin-top:8px"><button class="btn" id="d-seguimiento" type="button">Registrar seguimiento</button></div>
+    ${admin ? `
+    <form id="form-reapertura" class="reapertura">
+      <h3>Reapertura excepcional</h3>
+      <p class="muted">Solo administración. Exige motivo y queda registrada en el historial con su usuario y la fecha.</p>
+      <div class="row">
+        <div class="field"><label for="ra-estado">Reabrir en estado *</label><select id="ra-estado" name="estadoId" required>
+          ${reabribles.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label for="ra-motivo">Motivo * (mínimo 10 caracteres)</label>
+        <textarea id="ra-motivo" name="motivo" minlength="10" maxlength="1000" required></textarea></div>
+      <div class="errors" id="ra-errores"></div>
+      <div style="margin-top:8px"><button class="btn danger" type="submit">Reabrir incidente</button></div>
+    </form>` : ''}`;
   const asistente = personal ? `
     <h3>Asistente inteligente</h3>
     <div class="field">
-      <label for="d-pregunta">Consulta (vacío = usar la descripción del incidente)</label>
+      <label for="d-pregunta">Consulta (vacío = descripción, elemento afectado, mensaje de error y pasos intentados)</label>
       <textarea id="d-pregunta" placeholder="${esc(inc.descripcion)}"></textarea>
     </div>
+    ${!inc.mensajeError && !inc.pasosIntentados && !terminal ? `<p class="muted">Consejo: complete el mensaje de error y
+      los pasos ya intentados con <strong>Editar / reasignar</strong>. El asistente busca con esos datos y evita
+      sugerir lo que ya se probó.</p>` : ''}
     <div style="margin-top:8px"><button class="btn primary" id="d-asistir" type="button">Solicitar asistencia</button></div>
     <div id="d-resultado"></div>
 
@@ -193,26 +262,58 @@ function pintarDetalle(inc, historial) {
     : '<p class="muted">El técnico responsable gestiona este incidente. Aquí verá los cambios de estado.</p>';
   panel.innerHTML = `
     <div class="chart-head"><h2>#${inc.id} · ${esc(inc.titulo)}</h2>
-      ${personal ? '<button class="btn small" id="d-editar" type="button">Editar / reasignar</button>' : ''}</div>
+      ${personal && !terminal ? '<button class="btn small" id="d-editar" type="button">Editar / reasignar</button>' : ''}</div>
     <dl>
       <dt>Descripción</dt><dd>${esc(inc.descripcion)}</dd>
+      ${inc.seguimientoDe ? `<dt>Seguimiento de</dt><dd><a href="#" data-ir="${inc.seguimientoDe.id}">#${inc.seguimientoDe.id} ${esc(inc.seguimientoDe.nombre)}</a></dd>` : ''}
       <dt>Categoría</dt><dd>${esc(inc.categoria.nombre)}</dd>
       <dt>Prioridad</dt><dd>${esc(inc.prioridad.nombre)}</dd>
+      <dt>Elemento afectado</dt><dd>${inc.elemento ? esc(inc.elemento.nombre) : '<span class="muted">No indicado</span>'}</dd>
+      ${inc.mensajeError ? `<dt>Mensaje de error</dt><dd class="pre"><code>${esc(inc.mensajeError)}</code></dd>` : ''}
+      ${inc.pasosIntentados ? `<dt>Pasos ya intentados</dt><dd class="pre">${esc(inc.pasosIntentados)}</dd>` : ''}
+      ${personal ? `<dt>Problema</dt><dd>${inc.problema
+        ? `<a href="problemas.html?id=${inc.problema.id}">#${inc.problema.id} ${esc(inc.problema.nombre)}</a>`
+        : '<span class="muted">Sin vincular · se vincula desde Problemas</span>'}</dd>` : ''}
       <dt>Técnico responsable</dt><dd>${esc(inc.usuario.nombre)}</dd>
       <dt>Solicitante</dt><dd>${inc.solicitante ? esc(inc.solicitante) : '<span class="muted">No registrado</span>'}</dd>
       <dt>Creado</dt><dd>${fecha(inc.fechaCreacion)}</dd>
       <dt>Resuelto</dt><dd>${fecha(inc.fechaResolucion)}${inc.horasResolucion != null ? ` <span class="muted">(${num(inc.horasResolucion, 1)} h)</span>` : ''}</dd>
       <dt>SLA</dt><dd>${badgeSla(inc.sla.estado)} <span class="muted">${inc.sla.horasSla} h · vence ${fecha(inc.sla.vence)}${inc.sla.horasRestantes != null ? ' · ' + horasRestantes(inc.sla.horasRestantes) : ''}</span></dd>
+      <dt>Primera respuesta</dt><dd>${pr ? `${badgeSla(pr.estado)} <span class="muted">${esc(textoPrimeraRespuesta(pr))}</span>`
+        : '<span class="muted">No disponible</span>'}</dd>
       <dt>Actualizado</dt><dd>${fecha(inc.fechaActualizacion)}</dd>
       <dt>Estado</dt>
       ${campoEstado}
     </dl>
-    ${asistente}`;
+    ${cierre}
+    ${asistente}
+    ${personal ? '<div id="d-revision"></div>' : ''}`;
+
+  panel.querySelectorAll('a[data-ir]').forEach((a) => a.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    seleccionar(Number(a.dataset.ir));
+  }));
+  if (terminal) {
+    $('#d-seguimiento').addEventListener('click', () => abrirNuevo(inc));
+    $('#form-reapertura')?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const f = ev.currentTarget;
+      if (!confirm(`¿Reabrir el incidente #${inc.id}? Quedará registrado con su usuario y el motivo.`)) return;
+      try {
+        await api.reabrirIncidente(inc.id, Number(f.estadoId.value), f.motivo.value.trim());
+        toast(`Incidente #${inc.id} reabierto`);
+        await cargar();
+        seleccionar(inc.id);
+      } catch (err) {
+        $('#ra-errores').textContent = err.campos ? Object.values(err.campos).join(' · ') : err.message;
+      }
+    });
+  }
 
   if (!personal) return;
-  $('#d-editar').addEventListener('click', () => abrirEdicion(inc));
+  $('#d-editar')?.addEventListener('click', () => abrirEdicion(inc));
 
-  $('#d-guardar-estado').addEventListener('click', async () => {
+  $('#d-guardar-estado')?.addEventListener('click', async () => {
     try {
       await api.cambiarEstadoIncidente(inc.id, Number($('#d-estado').value));
       toast('Estado actualizado');
@@ -240,6 +341,48 @@ function pintarDetalle(inc, historial) {
   activarCalificaciones(panel, () => seleccionar(inc.id));
 }
 
+/**
+ * Revisión posterior: línea de tiempo (calculada por el servidor con el historial y las consultas)
+ * y formulario, solo si el incidente está finalizado. La causa se marca confirmada solo con evidencia.
+ */
+function pintarRevision(rev) {
+  const r = rev.revision;
+  const linea = rev.lineaTiempo.map((e) => `<li><span class="muted">${fecha(e.fecha)}${e.fechaAproximada ? ' (aprox.)' : ''}</span> ${esc(e.descripcion)}</li>`).join('');
+  const problema = rev.problema
+    ? `<p>Problema relacionado: <a href="problemas.html?id=${rev.problema.id}">#${rev.problema.id} ${esc(rev.problema.nombre)}</a></p>`
+    : '<p class="muted">Sin problema relacionado.</p>';
+  const formulario = !rev.finalizado
+    ? '<p class="muted">La revisión se registra cuando el incidente esté resuelto o cerrado.</p>'
+    : `<form id="f-revision">
+      <div class="field"><label for="r-impacto">Impacto *</label><textarea id="r-impacto" name="impacto" maxlength="5000" required placeholder="A quién y cómo afectó, durante cuánto tiempo">${esc(r?.impacto ?? '')}</textarea></div>
+      <div class="field"><label for="r-estado">Causa</label><select id="r-estado" name="estadoCausa">
+        <option value="PENDIENTE" ${r?.estadoCausa !== 'CONFIRMADA' ? 'selected' : ''}>Pendiente (no demostrada)</option>
+        <option value="CONFIRMADA" ${r?.estadoCausa === 'CONFIRMADA' ? 'selected' : ''}>Confirmada (con evidencia)</option></select></div>
+      <div class="field"><label for="r-causa">Causa o hipótesis</label><textarea id="r-causa" name="causa" maxlength="5000">${esc(r?.causa ?? '')}</textarea></div>
+      <div class="field"><label for="r-evidencia">Evidencia</label><textarea id="r-evidencia" name="evidenciaCausa" maxlength="5000">${esc(r?.evidenciaCausa ?? '')}</textarea></div>
+      <div class="field"><label for="r-solucion">Solución aplicada</label><textarea id="r-solucion" name="solucion" maxlength="5000">${esc(r?.solucion ?? '')}</textarea></div>
+      <div class="field"><label for="r-acciones">Acciones preventivas</label><textarea id="r-acciones" name="accionesPreventivas" maxlength="5000">${esc(r?.accionesPreventivas ?? '')}</textarea></div>
+      <div class="errors" id="r-errores"></div>
+      <button class="btn primary" type="submit" style="margin-top:8px">Guardar revisión</button>
+      ${r ? `<span class="muted"> Registrada por ${esc(r.autor.nombre)} · actualizada ${fecha(r.fechaActualizacion)}</span>` : ''}
+    </form>`;
+  $('#d-revision').innerHTML = `
+    <h3>Revisión posterior ${r ? (r.estadoCausa === 'CONFIRMADA' ? '<span class="badge ok">Causa confirmada</span>' : '<span class="badge warn">Causa pendiente</span>') : ''}</h3>
+    ${problema}
+    <h4>Línea de tiempo</h4>
+    <ol class="linea-tiempo">${linea}</ol>
+    ${formulario}`;
+  $('#f-revision')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      pintarRevision(await api.guardarRevision(rev.incidenteId, Object.fromEntries(new FormData(e.target))));
+      toast('Revisión guardada');
+    } catch (err) {
+      $('#r-errores').textContent = err.campos ? Object.values(err.campos).join(' · ') : err.message;
+    }
+  });
+}
+
 function abrirEdicion(inc) {
   const f = $('#form-editar');
   // Solo se ofrecen técnicos activos; el responsable actual se conserva aunque esté inactivo.
@@ -248,13 +391,24 @@ function abrirEdicion(inc) {
     usuarios.unshift({ id: inc.usuario.id, nombre: inc.usuario.nombre + ' (inactivo)' });
   }
   llenarSelect($('#e-usuario'), usuarios);
+  // Solo se ofrecen elementos activos; el actual se conserva aunque se haya desactivado.
+  const elementos = opcionesElemento(estado.catalogos.elementos);
+  if (inc.elemento && !elementos.some((e) => e.id === inc.elemento.id)) {
+    elementos.unshift({ id: inc.elemento.id, nombre: inc.elemento.nombre + ' (inactivo)' });
+  }
+  llenarSelect($('#e-elemento'), elementos, { vacio: 'No aplica / no sé' });
+  // Si el incidente tiene un elemento, el campo se muestra aunque el catálogo activo esté vacío
+  if (inc.elemento) $('#e-elemento').closest('.campo-elemento').hidden = false;
   $('#e-id').textContent = '#' + inc.id;
   f.titulo.value = inc.titulo;
   f.descripcion.value = inc.descripcion;
   f.categoriaId.value = inc.categoria.id;
   f.prioridadId.value = inc.prioridad.id;
   f.usuarioId.value = inc.usuario.id;
+  f.elementoId.value = inc.elemento?.id ?? '';
   f.solicitante.value = inc.solicitante ?? '';
+  f.mensajeError.value = inc.mensajeError ?? '';
+  f.pasosIntentados.value = inc.pasosIntentados ?? '';
   // Si lo registró una cuenta de solicitante, el nombre está ligado a esa cuenta
   f.solicitante.disabled = inc.solicitanteConCuenta;
   f.solicitante.title = inc.solicitanteConCuenta ? 'Registrado por la cuenta del solicitante' : '';
@@ -269,6 +423,7 @@ $('#form-editar').addEventListener('submit', async (e) => {
   const id = Number(e.target.dataset.id);
   const datos = Object.fromEntries(new FormData(e.target));
   ['categoriaId', 'prioridadId', 'usuarioId'].forEach((k) => datos[k] = Number(datos[k]));
+  normalizarElemento(datos);
   try {
     await api.actualizarIncidente(id, datos);
     $('#dlg-editar').close();
@@ -291,18 +446,38 @@ $('#tabla').addEventListener('click', (e) => {
 });
 
 const dlg = $('#dlg-nuevo');
-$('#btn-nuevo').addEventListener('click', () => { $('#n-errores').textContent = ''; dlg.showModal(); });
+/** Sin 'original' registra un incidente nuevo; con él, un seguimiento vinculado a ese incidente cerrado. */
+function abrirNuevo(original = null) {
+  const f = $('#form-nuevo');
+  f.reset();
+  f.dataset.seguimiento = original ? original.id : '';
+  $('#n-titulo-dialogo').textContent = original ? `Seguimiento del incidente #${original.id}` : 'Nuevo incidente';
+  $('#n-seguimiento').hidden = !original;
+  $('#n-seguimiento').textContent = original
+    ? `Se registrará como incidente nuevo vinculado a #${original.id} «${original.titulo}». El original no cambia.` : '';
+  if (original) {
+    f.titulo.value = `Seguimiento de #${original.id}: ${original.titulo}`.slice(0, 200);
+    f.categoriaId.value = original.categoria.id;
+    f.prioridadId.value = original.prioridad.id;
+  }
+  $('#n-errores').textContent = '';
+  dlg.showModal();
+}
+$('#btn-nuevo').addEventListener('click', () => abrirNuevo());
 $('#n-cancelar').addEventListener('click', () => dlg.close());
 $('#form-nuevo').addEventListener('submit', async (e) => {
   e.preventDefault();
   const datos = Object.fromEntries(new FormData(e.target));
   ['categoriaId', 'prioridadId', 'usuarioId'].forEach((k) => datos[k] = Number(datos[k]));
+  normalizarElemento(datos);
   if (tieneRol('SOLICITANTE')) { delete datos.usuarioId; delete datos.solicitante; }
   try {
-    const creado = await api.crearIncidente(datos);
+    const original = Number(e.target.dataset.seguimiento) || null;
+    const creado = original ? await api.registrarSeguimiento(original, datos) : await api.crearIncidente(datos);
     dlg.close();
     e.target.reset();
-    toast(`Incidente #${creado.id} registrado`);
+    e.target.dataset.seguimiento = '';
+    toast(original ? `Incidente #${creado.id} registrado como seguimiento de #${original}` : `Incidente #${creado.id} registrado`);
     estado.pagina = 0;
     await cargar();
     seleccionar(creado.id);

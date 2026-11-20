@@ -23,6 +23,19 @@ async function cargar() {
     ultimo = await api.dashboard(filtros);
     pintar(ultimo);
   } catch (e) { mostrarError(e); }
+  pintarRevisionesPendientes();
+}
+
+/** No depende de los filtros del dashboard: son todos los incidentes finalizados sin revisión. */
+async function pintarRevisionesPendientes() {
+  try {
+    const r = await api.revisionesPendientes();
+    $('#rev-nota').textContent = `${num(r.total)} incidente(s) finalizados sin revisión con prioridad de nivel ${r.nivelMinimo} o más, o con el SLA de resolución incumplido. Últimos:`;
+    $('#rev-pendientes').innerHTML = tabla([
+      ['#', (i) => `<a href="incidentes.html?id=${i.incidenteId}">${i.incidenteId}</a>`], ['Incidente', (i) => esc(i.titulo)],
+      ['Prioridad', (i) => esc(i.prioridad)], ['Resuelto', (i) => fecha(i.fechaResolucion)], ['Motivo', (i) => esc(i.motivo)],
+    ], r.ultimas);
+  } catch (e) { mostrarError(e); }
 }
 
 // ---------- Indicadores ----------
@@ -152,6 +165,13 @@ function pintarTablas(d) {
     ['Problema', (r) => esc(r.titulo)], ['Categoría', (r) => esc(r.categoria)],
     ['Ocurrencias', (r) => num(r.ocurrencias), 1], ['Promedio (h)', (r) => num(r.tiempoPromedioHoras, 1), 1],
   ], d.recurrentes);
+  const TIPO = { EQUIPO: 'Equipo', APLICACION: 'Aplicación', SERVICIO: 'Servicio' };
+  $('#por-elemento').innerHTML = tabla([
+    ['Elemento', (e) => e.elementoId == null ? '<span class="muted">Sin elemento indicado</span>' : esc(e.elemento)],
+    ['Tipo', (e) => esc(TIPO[e.tipo] ?? '—')], ['Total', (e) => num(e.total), 1],
+    ['Pendientes', (e) => num(e.pendientes), 1], ['Promedio (h)', (e) => num(e.tiempoPromedioHoras, 1), 1],
+    ['Cumple SLA %', (e) => num(e.cumplimientoSla, 2), 1],
+  ], d.porElemento);
 
   const a = d.asistencia;
   $('#asistencia').innerHTML = tabla([
@@ -163,6 +183,20 @@ function pintarTablas(d) {
     ? ` · promedio ${num(a.calificacionPromedio, 2)} / 5` : ''}.</p>`;
 }
 
+/**
+ * Primera respuesta = el incidente sale del estado inicial (calculado en SQL sobre el historial).
+ * Incluye incidentes finalizados; los que no tienen objetivo o fecha conocida se muestran aparte.
+ */
+function pintarPrimeraRespuesta(p) {
+  const cifra = (estado, valor) => `<span>${badgeSla(estado)} <strong>${num(valor)}</strong></span>`;
+  return `<p style="display:flex;gap:18px;flex-wrap:wrap">
+      <span>Primera respuesta${p.cumplimiento != null ? ` · cumplimiento <strong>${num(p.cumplimiento, 2)} %</strong>` : ''}:</span>
+      ${cifra('EN_PLAZO', p.enPlazo)} ${cifra('POR_VENCER', p.porVencer)} ${cifra('VENCIDO', p.vencidos)}
+      ${cifra('CUMPLIDO', p.cumplidos)} ${cifra('INCUMPLIDO', p.incumplidos)}
+      ${cifra('SIN_OBJETIVO', p.sinObjetivo)} ${cifra('SIN_DATOS', p.sinDatos)}
+    </p>`;
+}
+
 /** Situación actual frente al SLA: se calcula en el backend con la hora del servidor. */
 function pintarSla(s) {
   $('#sla-nota').textContent = `"Por vencer" = queda ${num(s.fraccionAlerta * 100)} % o menos del plazo de la prioridad`;
@@ -171,7 +205,7 @@ function pintarSla(s) {
     <p style="display:flex;gap:18px;flex-wrap:wrap">
       <span>Abiertos o en progreso: <strong>${num(s.abiertos)}</strong></span>
       ${cifra('EN_PLAZO', s.enPlazo)} ${cifra('POR_VENCER', s.porVencer)} ${cifra('VENCIDO', s.vencidos)}
-    </p>` + (s.criticos.length ? tabla([
+    </p>` + pintarPrimeraRespuesta(s.primeraRespuesta) + (s.criticos.length ? tabla([
     ['#', (i) => `<a href="incidentes.html?id=${i.id}">${i.id}</a>`], ['Incidente', (i) => esc(i.titulo)],
     ['Prioridad', (i) => `${esc(i.prioridad)} <span class="muted">(${i.slaHoras} h)</span>`],
     ['Técnico', (i) => esc(i.responsable)], ['Estado', (i) => badgeEstadoIncidente(i.estado)],

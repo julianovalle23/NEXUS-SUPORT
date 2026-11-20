@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import com.nexus.support.dto.UsuarioDtos.AsignarClaveRequest;
+import com.nexus.support.dto.UsuarioDtos.AuditoriaDto;
 import com.nexus.support.dto.UsuarioDtos.UsuarioRequest;
 import com.nexus.support.dto.UsuarioDtos.UsuarioResponse;
 import com.nexus.support.service.UsuarioService;
@@ -31,6 +32,12 @@ public class UsuarioController {
     @Operation(summary = "Listar todas las cuentas")
     public List<UsuarioResponse> listar() {
         return service.listar();
+    }
+
+    @GetMapping("/auditoria")
+    @Operation(summary = "Últimos cambios de perfil o estado de las cuentas (quién, a quién, cuándo, qué)")
+    public List<AuditoriaDto> auditoria() {
+        return service.auditoria();
     }
 
     @PostMapping
